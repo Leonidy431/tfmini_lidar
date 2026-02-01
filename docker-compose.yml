@@ -1,0 +1,26 @@
+version: "3.8"
+
+services:
+  blueos-lidar-slam:
+    build: .
+    image: blueos-lidar-slam:latest
+    container_name: blueos-lidar-slam
+    restart: unless-stopped
+    privileged: true
+    network_mode: host
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./data:/app/data
+      - /dev:/dev
+    devices:
+      - /dev/ttyUSB0:/dev/ttyUSB0
+      - /dev/ttyUSB1:/dev/ttyUSB1
+    environment:
+      - DEBUG=false
+      - LIDAR_PORT=/dev/ttyUSB0
+      - FLASK_ENV=production
+    labels:
+      - "blueos.extension.name=LiDAR SLAM Module"
+      - "blueos.extension.description=Real-time mapping, navigation and object detection with TFmini-S LiDAR"
+      - "blueos.extension.version=1.0.0"
