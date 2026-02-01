@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BlueOS LiDAR SLAM - Navigation & Object Detection</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+    <!-- Navigation Bar -->
+    <nav class="navbar">
+        <div class="navbar-brand">
+            <h1>LiDAR SLAM Module</h1>
+            <span class="subtitle">Navigation & Object Detection</span>
+        </div>
+        <div class="navbar-menu">
+            <a href="#dashboard" class="nav-link active" data-tab="dashboard">Dashboard</a>
+            <a href="#mapping" class="nav-link" data-tab="mapping">Mapping</a>
+            <a href="#navigation" class="nav-link" data-tab="navigation">Navigation</a>
+            <a href="#objects" class="nav-link" data-tab="objects">Objects</a>
+            <div class="status-indicator" id="statusIndicator"></div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="content">
+        <!-- Dashboard Tab -->
+        <div id="dashboard" class="tab-content active">
+            <section class="status-section">
+                <h2>System Status</h2>
+                <div class="status-grid">
+                    <div class="status-card">
+                        <span class="status-label">LiDAR Connection</span>
+                        <span class="status-value" id="lidarStatus">--</span>
+                    </div>
+                    <div class="status-card">
+                        <span class="status-label">Application</span>
+                        <span class="status-value" id="appStatus">--</span>
+                    </div>
+                    <div class="status-card">
+                        <span class="status-label">Mode</span>
+                        <span class="status-value" id="currentMode">--</span>
+                    </div>
+                    <div class="status-card">
+                        <span class="status-label">Readings/sec</span>
+                        <span class="status-value" id="readingsPerSec">0</span>
+                    </div>
+                </div>
+            </section>
+
+            <section class="controls-section">
+                <h2>Controls</h2>
+                <div class="button-group">
+                    <button class="btn btn-success" id="startBtn">Start</button>
+                    <button class="btn btn-danger" id="stopBtn">Stop</button>
+                    <button class="btn btn-secondary" id="refreshBtn">Refresh</button>
+                </div>
+            </section>
+
+            <section class="reading-section">
+                <h2>Current Reading</h2>
+                <div class="reading-display">
+                    <div class="reading-card large">
+                        <span class="reading-label">Distance</span>
+                        <span class="reading-value" id="currentDistance">--</span>
+                        <span class="reading-unit">m</span>
+                    </div>
+                    <div class="reading-card">
+                        <span class="reading-label">Signal Strength</span>
+                        <span class="reading-value" id="signalStrength">--</span>
+                    </div>
+                    <div class="reading-card">
+                        <span class="reading-label">Temperature</span>
+                        <span class="reading-value" id="temperature">--</span>
+                        <span class="reading-unit">C</span>
+                    </div>
+                </div>
+                <div class="distance-bar-container">
+                    <div class="distance-bar" id="distanceBar"></div>
+                    <div class="distance-markers">
+                        <span>0m</span>
+                        <span>3m</span>
+                        <span>6m</span>
+                        <span>9m</span>
+                        <span>12m</span>
+                    </div>
+                </div>
+            </section>
+
+            <section class="logs-section">
+                <h2>Activity Log</h2>
+                <div class="logs-container" id="logsContainer">
+                    <p class="log-entry">System initialized</p>
+                </div>
+            </section>
+        </div>
+
+        <!-- Mapping Tab -->
+        <div id="mapping" class="tab-content">
+            <section class="mapping-controls">
+                <h2>Mapping Controls</h2>
+                <div class="button-group">
+                    <button class="btn btn-success" id="startMappingBtn">Start Mapping</button>
+                    <button class="btn btn-danger" id="stopMappingBtn">Stop Mapping</button>
+                    <button class="btn btn-warning" id="clearMapBtn">Clear Map</button>
+                </div>
+            </section>
+
+            <section class="visualization-section">
+                <h2>3D Point Cloud</h2>
+                <div class="canvas3d" id="mappingCanvas"></div>
+                <div class="visualization-controls">
+                    <button class="btn btn-sm btn-secondary" id="resetCameraBtn">Reset View</button>
+                    <button class="btn btn-sm btn-secondary" id="toggleGridBtn">Toggle Grid</button>
+                    <button class="btn btn-sm btn-secondary" id="screenshotBtn">Screenshot</button>
+                </div>
+            </section>
+
+            <section class="mapping-stats">
+                <h2>Mapping Statistics</h2>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <span class="stat-label">Points Mapped</span>
+                        <span class="stat-value" id="mappedPoints">0</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">Scans Registered</span>
+                        <span class="stat-value" id="registeredScans">0</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">Drift Estimate</span>
+                        <span class="stat-value" id="driftEstimate">0 cm</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">Map Size</span>
+                        <span class="stat-value" id="mapSize">0 x 0 x 0 m</span>
+                    </div>
+                </div>
+            </section>
+
+            <section class="save-map-section">
+                <h2>Save Map</h2>
+                <div class="save-map-form">
+                    <input type="text" class="input-field" id="mapNameInput" placeholder="Map name">
+                    <input type="text" class="input-field" id="mapDescInput" placeholder="Description (optional)">
+                    <button class="btn btn-primary" id="saveMapBtn">Save Map</button>
+                </div>
+            </section>
+
+            <section class="maps-list-section">
+                <h2>Saved Maps</h2>
+                <div class="maps-list" id="mapsList">
+                    <p class="loading">Loading maps...</p>
+                </div>
+            </section>
+        </div>
+
+        <!-- Navigation Tab -->
+        <div id="navigation" class="tab-content">
+            <section class="nav-mode-section">
+                <h2>Navigation Mode</h2>
+                <div class="mode-selector">
+                    <button class="mode-btn" id="recordModeBtn" data-mode="record">
+                        <span class="mode-icon">REC</span>
+                        <span class="mode-title">Record Profile</span>
+                        <span class="mode-desc">Record navigation path</span>
+                    </button>
+                    <button class="mode-btn" id="navigateModeBtn" data-mode="navigate">
+                        <span class="mode-icon">NAV</span>
+                        <span class="mode-title">Navigate</span>
+                        <span class="mode-desc">Follow recorded path</span>
+                    </button>
+                    <button class="mode-btn" id="localizeModeBtn" data-mode="localize">
+                        <span class="mode-icon">LOC</span>
+                        <span class="mode-title">Localize</span>
+                        <span class="mode-desc">Position on map</span>
+                    </button>
+                </div>
+            </section>
+
+            <!-- Recording Section -->
+            <section class="recording-section" id="recordingSection">
+                <h2>Profile Recording</h2>
+                <div class="recording-controls">
+                    <input type="text" class="input-field" id="profileNameInput" placeholder="Profile name">
+                    <button class="btn btn-success" id="startRecordBtn">Start Recording</button>
+                    <button class="btn btn-danger" id="stopRecordBtn" disabled>Stop Recording</button>
+                </div>
+                <div class="recording-stats" id="recordingStats">
+                    <div class="stat-card">
+                        <span class="stat-label">Waypoints</span>
+                        <span class="stat-value" id="waypointCount">0</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">Distance</span>
+                        <span class="stat-value" id="recordedDistance">0 m</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">Duration</span>
+                        <span class="stat-value" id="recordingDuration">0 s</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Navigation Section -->
+            <section class="navigation-section" id="navigationSection">
+                <h2>Navigation</h2>
+                <div class="profile-selector">
+                    <select class="input-field" id="profileSelect">
+                        <option value="">Select a profile...</option>
+                    </select>
+                    <button class="btn btn-primary" id="loadProfileBtn">Load</button>
+                    <button class="btn btn-success" id="startNavBtn" disabled>Start Navigation</button>
+                    <button class="btn btn-danger" id="stopNavBtn" disabled>Stop</button>
+                </div>
+                <div class="navigation-display" id="navigationDisplay">
+                    <div class="nav-indicator">
+                        <div class="nav-arrow" id="navArrow"></div>
+                        <div class="nav-status" id="navStatus">Ready</div>
+                    </div>
+                    <div class="nav-stats">
+                        <div class="stat-card">
+                            <span class="stat-label">Distance to Waypoint</span>
+                            <span class="stat-value" id="distToWaypoint">-- m</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-label">Heading Error</span>
+                            <span class="stat-value" id="headingError">--</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-label">Progress</span>
+                            <span class="stat-value" id="navProgress">0%</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Localization Section -->
+            <section class="localization-section" id="localizationSection">
+                <h2>Localization</h2>
+                <div class="position-display">
+                    <div class="coordinate">
+                        <span class="coord-label">X</span>
+                        <span class="coord-value" id="posX">--</span>
+                    </div>
+                    <div class="coordinate">
+                        <span class="coord-label">Y</span>
+                        <span class="coord-value" id="posY">--</span>
+                    </div>
+                    <div class="coordinate">
+                        <span class="coord-label">Z</span>
+                        <span class="coord-value" id="posZ">--</span>
+                    </div>
+                    <div class="coordinate">
+                        <span class="coord-label">Confidence</span>
+                        <span class="coord-value" id="locConfidence">--</span>
+                    </div>
+                </div>
+                <div class="localization-map">
+                    <canvas id="localizationCanvas" class="canvas-2d"></canvas>
+                </div>
+            </section>
+
+            <section class="profiles-list-section">
+                <h2>Saved Profiles</h2>
+                <div class="profiles-list" id="profilesList">
+                    <p class="loading">Loading profiles...</p>
+                </div>
+            </section>
+        </div>
+
+        <!-- Objects Tab -->
+        <div id="objects" class="tab-content">
+            <section class="detection-controls">
+                <h2>Object Detection</h2>
+                <div class="button-group">
+                    <button class="btn btn-warning" id="clearObjectsBtn">Clear Objects</button>
+                    <button class="btn btn-primary" id="saveObjectsBtn">Save Objects</button>
+                    <button class="btn btn-secondary" id="refreshObjectsBtn">Refresh</button>
+                </div>
+            </section>
+
+            <section class="detection-stats">
+                <h2>Detection Statistics</h2>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <span class="stat-label">Total Objects</span>
+                        <span class="stat-value" id="totalObjects">0</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">Obstacles</span>
+                        <span class="stat-value" id="obstacleCount">0</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">Walls</span>
+                        <span class="stat-value" id="wallCount">0</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">Unknown</span>
+                        <span class="stat-value" id="unknownCount">0</span>
+                    </div>
+                </div>
+            </section>
+
+            <section class="objects-list-section">
+                <h2>Detected Objects</h2>
+                <div class="objects-list" id="objectsList">
+                    <p class="loading">No objects detected</p>
+                </div>
+            </section>
+
+            <section class="pattern-analysis">
+                <h2>Pattern Analysis</h2>
+                <div class="pattern-display" id="patternDisplay">
+                    <div class="pattern-indicator">
+                        <span class="pattern-label">Current Pattern</span>
+                        <span class="pattern-value" id="currentPattern">--</span>
+                    </div>
+                    <div class="pattern-details" id="patternDetails">
+                        <!-- Pattern details will be populated dynamically -->
+                    </div>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <p>BlueOS LiDAR SLAM v1.0.0 | TFmini-S Integration</p>
+        <p>Real-time SLAM | Navigation Profiles | Object Detection</p>
+    </footer>
+
+    <script src="/static/js/api.js"></script>
+    <script src="/static/js/visualization.js"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
