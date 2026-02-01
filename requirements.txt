@@ -21,7 +21,7 @@ aiohttp==3.9.1
 asyncio-mqtt==0.16.2
 
 # WebSocket
-python-socketio==5.10.0
+python-socketio==5.14.0
 websocket-client==1.6.4
 
 # Data Storage
