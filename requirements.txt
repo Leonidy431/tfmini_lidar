@@ -17,7 +17,7 @@ open3d==0.18.0
 pymavlink==2.4.41
 
 # Async Support
-aiohttp==3.9.1
+aiohttp==3.13.3
 asyncio-mqtt==0.16.2
 
 # WebSocket
