@@ -30,7 +30,7 @@ h5py==3.10.0
 # Utilities
 python-dateutil==2.8.2
 pyyaml==6.0.1
-requests==2.31.0
+requests==2.33.0
 
 # Testing
 pytest==7.4.3
