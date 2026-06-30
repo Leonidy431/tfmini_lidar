@@ -1,0 +1,127 @@
+# BlueOS LiDAR SLAM Navigation System (BLSNS)
+
+## Project Overview
+
+TFmini-S LiDAR integration for BlueOS underwater ROV navigation with SLAM mapping, profile recording, and object detection.
+
+## Key Files
+
+- `app/main.py` - Flask REST API + WebSocket server
+- `app/lidar_driver.py` - TFmini-S UART driver (115200 baud, 9-byte frames)
+- `app/slam_engine.py` - ICP-based point cloud registration
+- `app/profile_recorder.py` - Navigation waypoint recording/playback
+- `app/object_detection.py` - Pattern-based obstacle classification
+- `app/localization.py` - Map-based position estimation
+- `Dockerfile` - BlueOS Docker extension
+- `PATENT.md` - Patent declaration and IP documentation
+
+## Development Rules
+
+### Build & Test
+
+```bash
+# Run tests
+python -m pytest tests/ -v
+
+# Run application
+python -m app.main
+
+# Build Docker
+docker build -t blueos-lidar-slam .
+```
+
+### Code Style
+
+- Python: PEP-8, type hints required
+- JavaScript: ES6+, no jQuery
+- Commits: Conventional commits (feat/fix/docs/refactor)
+
+---
+
+## Mandatory Project Rules
+
+### Rule 1: Blind Spot Audit (99-Point Analysis)
+
+**Trigger**: Before major releases, PRs, or when explicitly requested.
+
+**Process**:
+1. Deploy 12 specialist auditors via multi-agent workflow
+2. Each specialist finds 8-9 blind spots in their domain
+3. Total target: ~99 blind spots identified
+4. Critical/High severity items get deep-dive verification
+5. Auto-engage specialists for each weakness area
+
+**Specialist Domains**:
+| Domain | Focus |
+|--------|-------|
+| Security | OWASP, injection, auth, secrets |
+| Reliability | Error handling, fault tolerance |
+| Performance | Memory, CPU, real-time constraints |
+| Testing | Coverage gaps, edge cases |
+| API Design | REST conventions, versioning |
+| DevOps | Docker, deployment, healthchecks |
+| Documentation | Missing/outdated docs |
+| Data Quality | Sensor validation, outliers |
+| Concurrency | Race conditions, thread safety |
+| UX/Frontend | Visualization, WebSocket |
+| Patent/IP | Prior art, licensing |
+| Compliance | Maritime safety, ISO 14971 |
+
+**Auto-Connect Specialists**:
+When a blind spot is found, automatically engage the matching skill from claude-skills:
+- Security → `engineering-team/senior-security`
+- Reliability → `engineering/chaos-engineering`
+- Performance → `engineering/performance-profiler`
+- Testing → `engineering-team/tdd-guide`
+- API → `engineering/api-design-reviewer`
+- DevOps → `engineering/docker-development`
+- Documentation → `docs/documentation-standards`
+- Data Quality → `engineering/data-quality-auditor`
+- Concurrency → `engineering-team/senior-backend`
+- UX → `engineering-team/senior-frontend`
+- Patent → `research/patent`
+- Compliance → `ra-qm-team/risk-management-specialist`
+
+### Rule 2: Freedom-to-Operate (FTO) Before Commercial Release
+
+Run patent skill FTO analysis before any commercial deployment:
+- Search CPC classes: G01S17 (LiDAR), G01C21 (navigation), G05D1 (underwater vehicles)
+- Document prior art in PATENT.md
+- Identify blocking patents requiring licensing
+
+### Rule 3: Golden Signals Monitoring
+
+All sensor/SLAM modules must expose metrics:
+- Latency (readings_per_second, ICP registration time)
+- Traffic (total measurements, scans processed)
+- Errors (invalid readings, driver errors)
+- Saturation (buffer utilization, memory usage)
+
+### Rule 4: Data Quality Validation
+
+Before SLAM processing:
+- IQR outlier detection on raw LiDAR readings
+- Z-score filtering for anomalous points
+- Data Quality Score tracking for calibration drift
+
+### Rule 5: Risk Management (ISO 14971)
+
+Maintain hazard analysis for:
+- TFmini-S sensor failures (laser safety, measurement errors)
+- Underwater interference (turbidity, multipath)
+- Communication dropouts
+- Navigation algorithm failures
+
+---
+
+## Dependencies
+
+- Python 3.9+
+- Flask 3.0+, Flask-SocketIO 5.3+
+- Open3D 0.18+ (ICP registration)
+- PySerial 3.5 (UART communication)
+- NumPy, SciPy (signal processing)
+
+## License
+
+Proprietary / Trade Secret - See PATENT.md
