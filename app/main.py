@@ -5,6 +5,7 @@ Integrates all modules and provides REST API for web interface.
 """
 
 import logging
+import os
 import threading
 import time
 import numpy as np
@@ -22,6 +23,10 @@ from app.localization import LocalizationEngine
 from app.map_manager import MapManager
 from app.profile_recorder import ProfileRecorder, ProfileNavigator
 from app.object_detection import ObjectDetector
+from app.security import (
+    require_auth, require_rate_limit, init_default_token,
+    is_public_route, validate_path_component
+)
 
 # Configure logging
 logging.basicConfig(
@@ -66,12 +71,16 @@ class LiDARSLAMApplication:
         self.profile_navigator = ProfileNavigator(self.config.navigation)
         self.object_detector = ObjectDetector(self.config.object_detection)
 
-        # State
-        self.mode = self.MODE_IDLE
-        self.is_running = False
+        # Thread safety locks
+        self._state_lock = threading.RLock()
+        self._reading_lock = threading.Lock()
+
+        # State (protected by _state_lock)
+        self._mode = self.MODE_IDLE
+        self._is_running = False
         self.current_heading = 0.0  # Will be updated from MAVLink if available
 
-        # Real-time data
+        # Real-time data (protected by _reading_lock)
         self.last_reading: Optional[LiDARReading] = None
         self.readings_per_second = 0
         self._reading_count = 0
@@ -79,6 +88,26 @@ class LiDARSLAMApplication:
 
         # WebSocket callback
         self.websocket_callback = None
+
+    @property
+    def mode(self):
+        with self._state_lock:
+            return self._mode
+
+    @mode.setter
+    def mode(self, value):
+        with self._state_lock:
+            self._mode = value
+
+    @property
+    def is_running(self):
+        with self._state_lock:
+            return self._is_running
+
+    @is_running.setter
+    def is_running(self, value):
+        with self._state_lock:
+            self._is_running = value
 
     def initialize(self) -> bool:
         """Initialize all components"""
@@ -162,15 +191,16 @@ class LiDARSLAMApplication:
         if not reading.valid:
             return
 
-        self.last_reading = reading
-        self._reading_count += 1
+        with self._reading_lock:
+            self.last_reading = reading
+            self._reading_count += 1
 
-        # Calculate readings per second
-        now = time.time()
-        if now - self._last_rate_check >= 1.0:
-            self.readings_per_second = self._reading_count
-            self._reading_count = 0
-            self._last_rate_check = now
+            # Calculate readings per second
+            now = time.time()
+            if now - self._last_rate_check >= 1.0:
+                self.readings_per_second = self._reading_count
+                self._reading_count = 0
+                self._last_rate_check = now
 
         # Convert distance to 3D point (assuming forward-facing sensor)
         # In real application, this would use IMU data for proper transformation
@@ -282,8 +312,11 @@ class LiDARSLAMApplication:
 app = Flask(__name__,
            template_folder='web/templates',
            static_folder='web/static')
-CORS(app)
-socketio = SocketIO(app, cors_allowed_origins="*")
+
+# Restricted CORS - only allow same-origin and BlueOS hosts
+ALLOWED_ORIGINS = os.environ.get('CORS_ORIGINS', 'http://localhost:5000,http://127.0.0.1:5000,http://blueos.local').split(',')
+CORS(app, origins=ALLOWED_ORIGINS, supports_credentials=True)
+socketio = SocketIO(app, cors_allowed_origins=ALLOWED_ORIGINS)
 
 # Create application instance
 lidar_app = LiDARSLAMApplication()
@@ -299,10 +332,35 @@ lidar_app.websocket_callback = ws_emit
 
 # ============ REST API Routes ============
 
+@app.before_request
+def check_auth():
+    """Check authentication for non-public routes"""
+    if request.method == 'OPTIONS':
+        return None
+    if is_public_route(request.path):
+        return None
+    if request.path.startswith('/static'):
+        return None
+    # WebSocket upgrade requests handled separately
+    if request.environ.get('HTTP_UPGRADE', '').lower() == 'websocket':
+        return None
+    return None  # Auth enforced per-route with @require_auth
+
+
 @app.route('/')
 def index():
     """Serve main page"""
     return render_template('index.html')
+
+
+@app.route('/api/health')
+def health_check():
+    """Health check endpoint for Docker HEALTHCHECK"""
+    return jsonify({
+        'status': 'healthy',
+        'timestamp': datetime.now().isoformat(),
+        'lidar_connected': lidar_app.driver.is_connected if lidar_app.driver else False
+    })
 
 
 @app.route('/api/register_service')
@@ -319,12 +377,15 @@ def register_service():
 
 
 @app.route('/api/status')
+@require_rate_limit
 def get_status():
     """Get application status"""
     return jsonify(lidar_app.get_status())
 
 
 @app.route('/api/start', methods=['POST'])
+@require_auth
+@require_rate_limit
 def start():
     """Start application"""
     success = lidar_app.start()
@@ -332,6 +393,8 @@ def start():
 
 
 @app.route('/api/stop', methods=['POST'])
+@require_auth
+@require_rate_limit
 def stop():
     """Stop application"""
     lidar_app.stop()
@@ -339,6 +402,8 @@ def stop():
 
 
 @app.route('/api/mode/<mode>', methods=['POST'])
+@require_auth
+@require_rate_limit
 def set_mode(mode: str):
     """Set operating mode"""
     success = lidar_app.set_mode(mode)
@@ -348,6 +413,8 @@ def set_mode(mode: str):
 # ============ Mapping API ============
 
 @app.route('/api/mapping/start', methods=['POST'])
+@require_auth
+@require_rate_limit
 def start_mapping():
     """Start mapping mode"""
     lidar_app.slam_engine.clear()
@@ -356,6 +423,8 @@ def start_mapping():
 
 
 @app.route('/api/mapping/stop', methods=['POST'])
+@require_auth
+@require_rate_limit
 def stop_mapping():
     """Stop mapping"""
     lidar_app.set_mode(LiDARSLAMApplication.MODE_IDLE)
@@ -366,6 +435,8 @@ def stop_mapping():
 
 
 @app.route('/api/mapping/clear', methods=['POST'])
+@require_auth
+@require_rate_limit
 def clear_mapping():
     """Clear current map"""
     lidar_app.slam_engine.clear()
@@ -373,12 +444,14 @@ def clear_mapping():
 
 
 @app.route('/api/mapping/statistics')
+@require_rate_limit
 def mapping_statistics():
     """Get mapping statistics"""
     return jsonify(lidar_app.slam_engine.get_statistics())
 
 
 @app.route('/api/mapping/points')
+@require_rate_limit
 def get_map_points():
     """Get current map points (downsampled for web)"""
     points = lidar_app.slam_engine.get_map_downsampled(voxel_size=0.1)
@@ -388,6 +461,7 @@ def get_map_points():
 
 
 @app.route('/api/mapping/trajectory')
+@require_rate_limit
 def get_trajectory():
     """Get mapping trajectory"""
     trajectory = lidar_app.slam_engine.get_trajectory()
@@ -397,14 +471,18 @@ def get_trajectory():
 # ============ Maps API ============
 
 @app.route('/api/maps')
+@require_rate_limit
 def list_maps():
     """List all saved maps"""
     return jsonify(lidar_app.map_manager.list_maps())
 
 
 @app.route('/api/maps/<name>')
+@require_rate_limit
 def get_map_info(name: str):
     """Get map information"""
+    if not validate_path_component(name):
+        return jsonify({'error': 'Invalid map name'}), 400
     info = lidar_app.map_manager.get_map_info(name)
     if info:
         return jsonify(info)
@@ -412,8 +490,13 @@ def get_map_info(name: str):
 
 
 @app.route('/api/maps/<name>/save', methods=['POST'])
+@require_auth
+@require_rate_limit
 def save_map(name: str):
     """Save current map"""
+    if not validate_path_component(name):
+        return jsonify({'success': False, 'error': 'Invalid map name'}), 400
+
     data = request.json or {}
     description = data.get('description', '')
     tags = data.get('tags', [])
@@ -438,8 +521,13 @@ def save_map(name: str):
 
 
 @app.route('/api/maps/<name>/load', methods=['POST'])
+@require_auth
+@require_rate_limit
 def load_map(name: str):
     """Load map for localization"""
+    if not validate_path_component(name):
+        return jsonify({'success': False, 'error': 'Invalid map name'}), 400
+
     result = lidar_app.map_manager.load_map(name)
     if result is None:
         return jsonify({'success': False, 'error': 'Map not found'}), 404
@@ -458,8 +546,12 @@ def load_map(name: str):
 
 
 @app.route('/api/maps/<name>/delete', methods=['DELETE'])
+@require_auth
+@require_rate_limit
 def delete_map(name: str):
     """Delete a map"""
+    if not validate_path_component(name):
+        return jsonify({'success': False, 'error': 'Invalid map name'}), 400
     success = lidar_app.map_manager.delete_map(name)
     return jsonify({'success': success}), 200 if success else 404
 
@@ -467,6 +559,7 @@ def delete_map(name: str):
 # ============ Localization API ============
 
 @app.route('/api/localization/position')
+@require_rate_limit
 def get_position():
     """Get current position"""
     stats = lidar_app.localization_engine.get_statistics()
@@ -474,6 +567,8 @@ def get_position():
 
 
 @app.route('/api/localization/reset', methods=['POST'])
+@require_auth
+@require_rate_limit
 def reset_localization():
     """Reset localization"""
     lidar_app.localization_engine.reset()
@@ -483,14 +578,20 @@ def reset_localization():
 # ============ Profile Recording API ============
 
 @app.route('/api/profiles')
+@require_rate_limit
 def list_profiles():
     """List all navigation profiles"""
     return jsonify(lidar_app.profile_recorder.list_profiles())
 
 
 @app.route('/api/profiles/<name>/record/start', methods=['POST'])
+@require_auth
+@require_rate_limit
 def start_recording(name: str):
     """Start recording a navigation profile"""
+    if not validate_path_component(name):
+        return jsonify({'success': False, 'error': 'Invalid profile name'}), 400
+
     data = request.json or {}
     description = data.get('description', '')
 
@@ -502,6 +603,8 @@ def start_recording(name: str):
 
 
 @app.route('/api/profiles/record/stop', methods=['POST'])
+@require_auth
+@require_rate_limit
 def stop_recording():
     """Stop recording"""
     profile = lidar_app.profile_recorder.stop_recording()
@@ -517,8 +620,13 @@ def stop_recording():
 
 
 @app.route('/api/profiles/<name>/navigate/start', methods=['POST'])
+@require_auth
+@require_rate_limit
 def start_navigation(name: str):
     """Start navigating with a profile"""
+    if not validate_path_component(name):
+        return jsonify({'success': False, 'error': 'Invalid profile name'}), 400
+
     profile = lidar_app.profile_recorder.load_profile(name)
     if not profile:
         return jsonify({'success': False, 'error': 'Profile not found'}), 404
@@ -531,6 +639,8 @@ def start_navigation(name: str):
 
 
 @app.route('/api/profiles/navigate/stop', methods=['POST'])
+@require_auth
+@require_rate_limit
 def stop_navigation():
     """Stop navigation"""
     lidar_app.profile_navigator.stop_navigation()
@@ -539,8 +649,12 @@ def stop_navigation():
 
 
 @app.route('/api/profiles/<name>/delete', methods=['DELETE'])
+@require_auth
+@require_rate_limit
 def delete_profile(name: str):
     """Delete a profile"""
+    if not validate_path_component(name):
+        return jsonify({'success': False, 'error': 'Invalid profile name'}), 400
     success = lidar_app.profile_recorder.delete_profile(name)
     return jsonify({'success': success}), 200 if success else 404
 
@@ -548,6 +662,7 @@ def delete_profile(name: str):
 # ============ Object Detection API ============
 
 @app.route('/api/objects')
+@require_rate_limit
 def get_objects():
     """Get all detected objects"""
     return jsonify({
@@ -557,18 +672,24 @@ def get_objects():
 
 
 @app.route('/api/objects/nearby')
+@require_rate_limit
 def get_nearby_objects():
     """Get objects near a position"""
-    x = float(request.args.get('x', 0))
-    y = float(request.args.get('y', 0))
-    z = float(request.args.get('z', 0))
-    radius = float(request.args.get('radius', 5.0))
+    try:
+        x = float(request.args.get('x', 0))
+        y = float(request.args.get('y', 0))
+        z = float(request.args.get('z', 0))
+        radius = min(float(request.args.get('radius', 5.0)), 100.0)  # Max 100m radius
+    except (ValueError, TypeError):
+        return jsonify({'error': 'Invalid coordinates'}), 400
 
     objects = lidar_app.object_detector.get_nearby_objects((x, y, z), radius)
     return jsonify({'objects': objects})
 
 
 @app.route('/api/objects/clear', methods=['POST'])
+@require_auth
+@require_rate_limit
 def clear_objects():
     """Clear detected objects"""
     lidar_app.object_detector.clear_objects()
@@ -576,6 +697,8 @@ def clear_objects():
 
 
 @app.route('/api/objects/save', methods=['POST'])
+@require_auth
+@require_rate_limit
 def save_objects():
     """Save detected objects"""
     success = lidar_app.object_detector.save_objects()
@@ -612,6 +735,10 @@ def on_get_map_points():
 def main():
     """Main entry point"""
     logger.info("Starting BlueOS LiDAR SLAM Extension...")
+
+    # Initialize API token
+    api_token = init_default_token()
+    logger.info(f"API Token: {api_token}")
 
     # Initialize application
     if not lidar_app.initialize():

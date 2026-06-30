@@ -84,6 +84,15 @@ class TFminiSDriver:
         self.last_reading: Optional[LiDARReading] = None
         self.readings_history = deque(maxlen=100)
 
+        # Reconnection settings
+        self.reconnect_enabled = True
+        self.reconnect_attempts = 0
+        self.max_reconnect_attempts = 10
+        self.reconnect_delay_base = 1.0  # seconds
+        self.reconnect_delay_max = 30.0  # max backoff
+        self._reconnect_lock = threading.Lock()
+        self._last_successful_read = time.time()
+
     @property
     def is_connected(self) -> bool:
         return self.serial_conn is not None and self.serial_conn.is_open
@@ -150,24 +159,85 @@ class TFminiSDriver:
             self.callbacks.remove(callback)
 
     def _read_loop(self):
-        """Main reading loop"""
+        """Main reading loop with auto-reconnection"""
+        consecutive_errors = 0
+
         while self.is_running:
             try:
+                if not self.is_connected:
+                    if self.reconnect_enabled:
+                        self._attempt_reconnect()
+                    else:
+                        time.sleep(1.0)
+                    continue
+
                 if self.serial_conn and self.serial_conn.in_waiting > 0:
                     data = self.serial_conn.read(self.serial_conn.in_waiting)
                     self.buffer.extend(data)
                     self._process_buffer()
+                    self._last_successful_read = time.time()
+                    consecutive_errors = 0
+                    self.reconnect_attempts = 0
                 else:
                     time.sleep(0.001)  # 1ms sleep to prevent CPU spinning
+
+                # Check for stale connection (no data for 5+ seconds)
+                if time.time() - self._last_successful_read > 5.0:
+                    logger.warning("No data received for 5 seconds, checking connection")
+                    if self.serial_conn and not self.serial_conn.is_open:
+                        raise serial.SerialException("Connection lost")
+                    self._last_successful_read = time.time()
 
             except serial.SerialException as e:
                 logger.error(f"Serial error: {e}")
                 self.errors_count += 1
-                time.sleep(0.1)
+                consecutive_errors += 1
+                self._handle_connection_error()
             except Exception as e:
                 logger.error(f"Read loop error: {e}")
                 self.errors_count += 1
-                time.sleep(0.1)
+                consecutive_errors += 1
+                if consecutive_errors >= 10:
+                    self._handle_connection_error()
+                else:
+                    time.sleep(0.1)
+
+    def _handle_connection_error(self):
+        """Handle connection errors by disconnecting and preparing for reconnect"""
+        with self._reconnect_lock:
+            try:
+                if self.serial_conn:
+                    self.serial_conn.close()
+            except:
+                pass
+            self.serial_conn = None
+            self.buffer.clear()
+
+    def _attempt_reconnect(self):
+        """Attempt to reconnect with exponential backoff"""
+        with self._reconnect_lock:
+            if self.reconnect_attempts >= self.max_reconnect_attempts:
+                logger.error(f"Max reconnect attempts ({self.max_reconnect_attempts}) reached")
+                time.sleep(self.reconnect_delay_max)
+                self.reconnect_attempts = 0  # Reset to allow future attempts
+                return
+
+            # Calculate delay with exponential backoff
+            delay = min(
+                self.reconnect_delay_base * (2 ** self.reconnect_attempts),
+                self.reconnect_delay_max
+            )
+
+            self.reconnect_attempts += 1
+            logger.info(f"Reconnection attempt {self.reconnect_attempts}/{self.max_reconnect_attempts} in {delay:.1f}s")
+            time.sleep(delay)
+
+            if self.connect():
+                logger.info("Reconnection successful")
+                self.reconnect_attempts = 0
+                self._last_successful_read = time.time()
+            else:
+                logger.warning(f"Reconnection attempt {self.reconnect_attempts} failed")
 
     def _process_buffer(self):
         """Process accumulated buffer data"""
@@ -362,5 +432,13 @@ class TFminiSDriver:
             'error_rate': self.errors_count / max(1, self.readings_count),
             'average_distance': round(avg_distance, 3),
             'average_strength': round(avg_strength, 1),
-            'last_reading': self.last_reading.to_dict() if self.last_reading else None
+            'last_reading': self.last_reading.to_dict() if self.last_reading else None,
+            'reconnect_attempts': self.reconnect_attempts,
+            'reconnect_enabled': self.reconnect_enabled,
+            'seconds_since_last_read': round(time.time() - self._last_successful_read, 1)
         }
+
+    def set_reconnect_enabled(self, enabled: bool):
+        """Enable or disable auto-reconnection"""
+        self.reconnect_enabled = enabled
+        logger.info(f"Auto-reconnect {'enabled' if enabled else 'disabled'}")

@@ -4,6 +4,7 @@ FROM python:3.11-slim-bullseye
 RUN apt-get update && apt-get install -y \
     build-essential \
     git \
+    curl \
     libgl1-mesa-glx \
     libglib2.0-0 \
     libsm6 \
@@ -24,20 +25,25 @@ COPY tests/ ./tests/
 # Expose port
 EXPOSE 5000
 
+# Health check endpoint
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:5000/api/health || exit 1
+
 # BlueOS Labels
-LABEL version="1.0.0"
+LABEL version="1.0.1"
 LABEL permissions='{\
   "ExposedPorts": {\
     "5000/tcp": {}\
   },\
   "HostConfig": {\
     "Binds": ["/usr/blueos/extensions/lidar-slam:/app/data"],\
-    "Privileged": true,\
+    "Privileged": false,\
     "Devices": [\
       {"PathOnHost": "/dev/ttyUSB0", "PathInContainer": "/dev/ttyUSB0", "CgroupPermissions": "rwm"},\
       {"PathOnHost": "/dev/ttyUSB1", "PathInContainer": "/dev/ttyUSB1", "CgroupPermissions": "rwm"},\
       {"PathOnHost": "/dev/ttyAMA0", "PathInContainer": "/dev/ttyAMA0", "CgroupPermissions": "rwm"}\
     ],\
+    "CapAdd": ["SYS_RAWIO"],\
     "PortBindings": {\
       "5000/tcp": [{"HostPort": "5000"}]\
     },\

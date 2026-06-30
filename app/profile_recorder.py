@@ -20,6 +20,7 @@ import threading
 import logging
 
 from app.config import Config
+from app.security import safe_join, validate_path_component
 
 logger = logging.getLogger(__name__)
 
@@ -216,8 +217,15 @@ class ProfileRecorder:
             logger.error("No profile to save")
             return False
 
+        if not validate_path_component(profile.name):
+            logger.error(f"Invalid profile name: {profile.name}")
+            return False
+
         try:
-            filepath = os.path.join(self.profiles_dir, f"{profile.name}.json")
+            filepath = safe_join(self.profiles_dir, f"{profile.name}.json")
+            if filepath is None:
+                logger.error(f"Path traversal blocked for profile: {profile.name}")
+                return False
 
             with open(filepath, 'w') as f:
                 json.dump(profile.to_dict(), f, indent=2)
@@ -231,8 +239,15 @@ class ProfileRecorder:
 
     def load_profile(self, name: str) -> Optional[NavigationProfile]:
         """Load profile from disk"""
+        if not validate_path_component(name):
+            logger.error(f"Invalid profile name: {name}")
+            return None
+
         try:
-            filepath = os.path.join(self.profiles_dir, f"{name}.json")
+            filepath = safe_join(self.profiles_dir, f"{name}.json")
+            if filepath is None:
+                logger.error(f"Path traversal blocked for profile: {name}")
+                return None
 
             if not os.path.exists(filepath):
                 logger.error(f"Profile not found: {name}")
@@ -273,8 +288,16 @@ class ProfileRecorder:
 
     def delete_profile(self, name: str) -> bool:
         """Delete a profile"""
+        if not validate_path_component(name):
+            logger.error(f"Invalid profile name: {name}")
+            return False
+
         try:
-            filepath = os.path.join(self.profiles_dir, f"{name}.json")
+            filepath = safe_join(self.profiles_dir, f"{name}.json")
+            if filepath is None:
+                logger.error(f"Path traversal blocked for profile: {name}")
+                return False
+
             if os.path.exists(filepath):
                 os.remove(filepath)
                 logger.info(f"Profile deleted: {name}")

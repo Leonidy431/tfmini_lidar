@@ -17,6 +17,7 @@ import logging
 import h5py
 
 from app.config import Config
+from app.security import safe_join, validate_path_component
 
 logger = logging.getLogger(__name__)
 
@@ -118,9 +119,16 @@ class MapManager:
             logger.error(f"Unsupported format: {format}")
             return False
 
+        if not validate_path_component(name):
+            logger.error(f"Invalid map name: {name}")
+            return False
+
         try:
-            # Create map directory
-            map_dir = os.path.join(self.maps_dir, name)
+            # Create map directory with path traversal protection
+            map_dir = safe_join(self.maps_dir, name)
+            if map_dir is None:
+                logger.error(f"Path traversal blocked for map: {name}")
+                return False
             os.makedirs(map_dir, exist_ok=True)
 
             # Save points
@@ -198,8 +206,15 @@ class MapManager:
         Returns:
             Tuple of (points_array, metadata) or None if failed
         """
+        if not validate_path_component(name):
+            logger.error(f"Invalid map name: {name}")
+            return None
+
         try:
-            map_dir = os.path.join(self.maps_dir, name)
+            map_dir = safe_join(self.maps_dir, name)
+            if map_dir is None:
+                logger.error(f"Path traversal blocked for map: {name}")
+                return None
 
             if not os.path.exists(map_dir):
                 logger.error(f"Map '{name}' not found")
@@ -264,8 +279,14 @@ class MapManager:
 
     def load_trajectory(self, name: str) -> Optional[np.ndarray]:
         """Load trajectory for a map"""
+        if not validate_path_component(name):
+            return None
+
         try:
-            traj_file = os.path.join(self.maps_dir, name, 'trajectory.npy')
+            map_dir = safe_join(self.maps_dir, name)
+            if map_dir is None:
+                return None
+            traj_file = os.path.join(map_dir, 'trajectory.npy')
             if os.path.exists(traj_file):
                 return np.load(traj_file)
             return None
@@ -307,8 +328,15 @@ class MapManager:
 
     def delete_map(self, name: str) -> bool:
         """Delete a map"""
+        if not validate_path_component(name):
+            logger.error(f"Invalid map name: {name}")
+            return False
+
         try:
-            map_dir = os.path.join(self.maps_dir, name)
+            map_dir = safe_join(self.maps_dir, name)
+            if map_dir is None:
+                logger.error(f"Path traversal blocked for map: {name}")
+                return False
 
             if os.path.exists(map_dir):
                 shutil.rmtree(map_dir)
@@ -324,8 +352,15 @@ class MapManager:
 
     def update_metadata(self, name: str, **kwargs) -> bool:
         """Update map metadata"""
+        if not validate_path_component(name):
+            logger.error(f"Invalid map name: {name}")
+            return False
+
         try:
-            metadata_file = os.path.join(self.maps_dir, name, 'metadata.json')
+            map_dir = safe_join(self.maps_dir, name)
+            if map_dir is None:
+                return False
+            metadata_file = os.path.join(map_dir, 'metadata.json')
 
             if not os.path.exists(metadata_file):
                 logger.error(f"Map '{name}' metadata not found")
@@ -388,8 +423,13 @@ class MapManager:
 
     def get_map_info(self, name: str) -> Optional[Dict]:
         """Get detailed map information"""
+        if not validate_path_component(name):
+            return None
+
         try:
-            map_dir = os.path.join(self.maps_dir, name)
+            map_dir = safe_join(self.maps_dir, name)
+            if map_dir is None:
+                return None
 
             if not os.path.exists(map_dir):
                 return None
