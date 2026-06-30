@@ -7,13 +7,45 @@ TFmini-S LiDAR integration for BlueOS underwater ROV navigation with SLAM mappin
 ## Key Files
 
 - `app/main.py` - Flask REST API + WebSocket server
-- `app/lidar_driver.py` - TFmini-S UART driver (115200 baud, 9-byte frames)
+- `app/lidar_driver.py` - TFmini-S UART driver (115200 baud, 9-byte frames, auto-reconnect)
 - `app/slam_engine.py` - ICP-based point cloud registration
 - `app/profile_recorder.py` - Navigation waypoint recording/playback
 - `app/object_detection.py` - Pattern-based obstacle classification
 - `app/localization.py` - Map-based position estimation
+- `app/security.py` - Authentication, rate limiting, path traversal protection
 - `Dockerfile` - BlueOS Docker extension
 - `PATENT.md` - Patent declaration and IP documentation
+
+## Security
+
+### API Authentication
+
+All state-changing API routes require authentication:
+
+```bash
+# Set persistent token via environment
+export LIDAR_API_TOKEN="your-secure-token"
+
+# Or use auto-generated token (shown in startup logs)
+# Pass token via:
+# - Authorization: Bearer <token>
+# - X-API-Key: <token>
+# - ?api_key=<token>
+```
+
+### Protected Endpoints
+
+Routes requiring auth: `/api/start`, `/api/stop`, `/api/mode/*`, `/api/mapping/*`, 
+`/api/maps/*/save`, `/api/maps/*/load`, `/api/maps/*/delete`, `/api/profiles/*`, 
+`/api/objects/clear`, `/api/objects/save`
+
+Public routes: `/`, `/api/health`, `/api/register_service`, `/api/status` (read-only)
+
+### CORS Configuration
+
+```bash
+export CORS_ORIGINS="http://blueos.local,http://localhost:5000"
+```
 
 ## Development Rules
 
