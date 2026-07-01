@@ -152,9 +152,20 @@ class LiDARSLAMApplication:
 
         # Add data callback
         self.driver.add_callback(self._on_lidar_reading)
+        # Propagate driver errors to clients for visibility (Error Handling #3)
+        self.driver.add_error_callback(self._on_driver_error)
 
         logger.info("Application initialized successfully")
         return True
+
+    def _on_driver_error(self, context: str, exc: Exception):
+        """Broadcast driver errors and current health to WebSocket clients."""
+        if self.websocket_callback:
+            self.websocket_callback('driver_error', {
+                'context': context,
+                'message': str(exc),
+                'health': self.get_health()
+            })
 
     def start(self) -> bool:
         """Start the application"""
@@ -372,6 +383,45 @@ class LiDARSLAMApplication:
         if self.websocket_callback:
             self.websocket_callback('detection', detection.to_dict())
 
+    def get_health(self) -> Dict:
+        """Classify overall system health for graceful degradation (#2).
+
+        States:
+          - healthy:  sensor connected, low error rate, good data quality
+          - degraded: running but a subsystem is impaired (recovering,
+                      elevated errors, or poor data quality)
+          - failed:   sensor unavailable while the app is meant to be running
+        """
+        connected = bool(self.driver and self.driver.is_connected)
+        lidar_stats = self.driver.get_statistics() if self.driver else {}
+        error_rate = lidar_stats.get('error_rate', 0.0)
+        dq = self.data_quality.quality_score
+        reconnecting = lidar_stats.get('reconnect_attempts', 0) > 0
+
+        reasons = []
+        state = 'healthy'
+
+        if self.is_running and not connected:
+            state = 'failed'
+            reasons.append('sensor_disconnected')
+        elif reconnecting or error_rate > 0.1 or dq < 0.7:
+            state = 'degraded'
+            if reconnecting:
+                reasons.append('reconnecting')
+            if error_rate > 0.1:
+                reasons.append('high_error_rate')
+            if dq < 0.7:
+                reasons.append('low_data_quality')
+
+        return {
+            'state': state,
+            'reasons': reasons,
+            'sensor_connected': connected,
+            'error_rate': round(error_rate, 4),
+            'data_quality_score': dq,
+            'last_error': lidar_stats.get('last_error') if self.driver else None
+        }
+
     def get_status(self) -> Dict:
         """Get comprehensive application status"""
         lidar_stats = self.driver.get_statistics() if self.driver else {}
@@ -393,6 +443,7 @@ class LiDARSLAMApplication:
             'recording': recording_status,
             'navigation': navigation_status,
             'data_quality': self.data_quality.get_statistics(),
+            'health': self.get_health(),
             'pipeline': {
                 'queue_depth': self._processing_queue.qsize(),
                 'queue_capacity': self._processing_queue.maxsize,
@@ -499,12 +550,19 @@ def index():
 
 @app.route('/api/health')
 def health_check():
-    """Health check endpoint for Docker HEALTHCHECK"""
+    """Health check endpoint for Docker HEALTHCHECK and monitoring.
+
+    Returns 200 when healthy/degraded (process is alive) and 503 when the
+    sensor has failed while the app is meant to be running.
+    """
+    health = lidar_app.get_health()
+    status_code = 503 if health['state'] == 'failed' else 200
     return jsonify({
-        'status': 'healthy',
+        'status': health['state'],
         'timestamp': datetime.now().isoformat(),
-        'lidar_connected': lidar_app.driver.is_connected if lidar_app.driver else False
-    })
+        'lidar_connected': health['sensor_connected'],
+        'reasons': health['reasons']
+    }), status_code
 
 
 @app.route('/api/register_service')

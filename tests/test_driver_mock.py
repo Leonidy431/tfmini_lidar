@@ -212,6 +212,32 @@ class TestStatistics:
         assert 'reconnect_attempts' in stats
         assert 'reconnect_enabled' in stats
         assert 'seconds_since_last_read' in stats
+        assert 'last_error' in stats
+
+
+class TestErrorPropagation:
+    def test_error_callback_invoked(self):
+        driver = TFminiSDriver('/dev/ttyUSB0')
+        seen = []
+        driver.add_error_callback(lambda ctx, exc: seen.append((ctx, str(exc))))
+
+        driver._notify_error('serial', RuntimeError("cable unplugged"))
+
+        assert len(seen) == 1
+        assert seen[0][0] == 'serial'
+        assert 'cable unplugged' in seen[0][1]
+        assert driver.last_error is not None
+
+    def test_error_callback_isolated(self):
+        driver = TFminiSDriver('/dev/ttyUSB0')
+        good = []
+        driver.add_error_callback(lambda ctx, exc: (_ for _ in ()).throw(ValueError("bad")))
+        driver.add_error_callback(lambda ctx, exc: good.append(ctx))
+
+        driver._notify_error('read_loop', RuntimeError("x"))
+
+        # Second callback runs despite the first raising
+        assert good == ['read_loop']
 
 
 if __name__ == '__main__':

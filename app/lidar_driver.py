@@ -82,7 +82,9 @@ class TFminiSDriver:
         self.thread: Optional[threading.Thread] = None
 
         self.callbacks: List[Callable[[LiDARReading], None]] = []
+        self.error_callbacks: List[Callable[[str, Exception], None]] = []
         self.buffer = bytearray()
+        self.last_error: Optional[str] = None
 
         # Statistics
         self.readings_count = 0
@@ -164,6 +166,19 @@ class TFminiSDriver:
         if callback in self.callbacks:
             self.callbacks.remove(callback)
 
+    def add_error_callback(self, callback: Callable[[str, Exception], None]):
+        """Register a callback notified on driver errors (context, exception)."""
+        self.error_callbacks.append(callback)
+
+    def _notify_error(self, context: str, exc: Exception):
+        """Propagate an error to registered error callbacks (Error Handling #3)."""
+        self.last_error = f"{context}: {exc}"
+        for cb in list(self.error_callbacks):
+            try:
+                cb(context, exc)
+            except Exception as e:
+                logger.error(f"Error callback failed: {e}")
+
     def _read_loop(self):
         """Main reading loop with auto-reconnection"""
         consecutive_errors = 0
@@ -198,11 +213,13 @@ class TFminiSDriver:
                 logger.error(f"Serial error: {e}")
                 self.errors_count += 1
                 consecutive_errors += 1
+                self._notify_error('serial', e)
                 self._handle_connection_error()
             except Exception as e:
                 logger.error(f"Read loop error: {e}")
                 self.errors_count += 1
                 consecutive_errors += 1
+                self._notify_error('read_loop', e)
                 if consecutive_errors >= 10:
                     self._handle_connection_error()
                 else:
@@ -443,7 +460,8 @@ class TFminiSDriver:
             'last_reading': self.last_reading.to_dict() if self.last_reading else None,
             'reconnect_attempts': self.reconnect_attempts,
             'reconnect_enabled': self.reconnect_enabled,
-            'seconds_since_last_read': round(time.time() - self._last_successful_read, 1)
+            'seconds_since_last_read': round(time.time() - self._last_successful_read, 1),
+            'last_error': self.last_error
         }
 
     def set_reconnect_enabled(self, enabled: bool):
