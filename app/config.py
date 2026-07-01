@@ -29,6 +29,7 @@ class SLAMConfig:
     max_correspondence_distance: float = 0.5
     max_iterations: int = 50
     buffer_size: int = 1000  # Points buffer before processing
+    motion_threshold: float = 0.01  # Min centroid displacement (m) to run ICP
 
 
 @dataclass

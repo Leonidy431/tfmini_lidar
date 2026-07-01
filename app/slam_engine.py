@@ -75,6 +75,9 @@ class SLAMEngine:
             'max': np.array([0.0, 0.0, 0.0])
         }
 
+    # Hard cap to bound memory if processing ever stalls (Performance #1).
+    MAX_BUFFER_MULTIPLIER = 2
+
     def add_point(self, x: float, y: float, z: float):
         """Add a single point to the scan buffer"""
         with self.lock:
@@ -82,6 +85,8 @@ class SLAMEngine:
 
             if len(self.scan_buffer) >= self.config.buffer_size:
                 self._process_buffer()
+            else:
+                self._enforce_buffer_cap()
 
     def add_points(self, points: np.ndarray):
         """Add multiple points at once"""
@@ -91,6 +96,16 @@ class SLAMEngine:
 
             if len(self.scan_buffer) >= self.config.buffer_size:
                 self._process_buffer()
+            else:
+                self._enforce_buffer_cap()
+
+    def _enforce_buffer_cap(self):
+        """Trim the oldest points if the buffer grows beyond its hard cap."""
+        cap = self.config.buffer_size * self.MAX_BUFFER_MULTIPLIER
+        if len(self.scan_buffer) > cap:
+            overflow = len(self.scan_buffer) - cap
+            del self.scan_buffer[:overflow]
+            logger.warning(f"Scan buffer capped, dropped {overflow} old points")
 
     def _process_buffer(self):
         """Process accumulated buffer into a scan"""
@@ -137,6 +152,16 @@ class SLAMEngine:
             self.total_points = len(points_3d)
             self._update_bounds(points_3d)
             logger.info(f"Initialized first scan ({len(points_3d)} points)")
+            return True, np.eye(4)
+
+        # Motion pre-check (Performance #2): if the scan centroid has barely
+        # moved since the reference, skip the expensive ICP and reuse identity.
+        # This avoids re-registering near-duplicate stationary scans.
+        motion_threshold = getattr(self.config, 'motion_threshold', 0.01)
+        ref_centroid = np.mean(np.asarray(self.reference_cloud.pcd.points), axis=0)
+        cur_centroid = np.mean(points_3d, axis=0)
+        if np.linalg.norm(cur_centroid - ref_centroid) < motion_threshold:
+            logger.debug("Motion below threshold, skipping ICP")
             return True, np.eye(4)
 
         # ICP registration

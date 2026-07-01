@@ -6,6 +6,7 @@ Integrates all modules and provides REST API for web interface.
 
 import logging
 import os
+import queue
 import threading
 import time
 import numpy as np
@@ -94,6 +95,15 @@ class LiDARSLAMApplication:
         self._reading_count = 0
         self._last_rate_check = time.time()
 
+        # Real-time decoupling: the serial read thread only enqueues readings;
+        # a dedicated worker thread runs the heavy SLAM/localization/detection
+        # so a slow pipeline can never back up the UART buffer. When the queue
+        # is full the oldest frames are dropped (tracked as saturation metric).
+        self._processing_queue: "queue.Queue[LiDARReading]" = queue.Queue(maxsize=200)
+        self._processing_thread: Optional[threading.Thread] = None
+        self._processing_active = False
+        self._dropped_frames = 0
+
         # WebSocket callback
         self.websocket_callback = None
 
@@ -154,6 +164,7 @@ class LiDARSLAMApplication:
                 return False
 
         try:
+            self._start_processing_thread()
             self.driver.start()
             self.is_running = True
             logger.info("Application started")
@@ -170,7 +181,43 @@ class LiDARSLAMApplication:
         if self.driver:
             self.driver.stop()
 
+        self._stop_processing_thread()
+
         logger.info("Application stopped")
+
+    def _start_processing_thread(self):
+        """Start the background reading-processing worker."""
+        if self._processing_thread and self._processing_thread.is_alive():
+            return
+        self._processing_active = True
+        self._processing_thread = threading.Thread(
+            target=self._processing_loop, daemon=True, name="reading-processor"
+        )
+        self._processing_thread.start()
+
+    def _stop_processing_thread(self):
+        """Stop the background worker and drain the queue."""
+        self._processing_active = False
+        if self._processing_thread:
+            self._processing_thread.join(timeout=2.0)
+        # Drain any leftover queued readings
+        try:
+            while True:
+                self._processing_queue.get_nowait()
+        except queue.Empty:
+            pass
+
+    def _processing_loop(self):
+        """Consume queued readings and run the heavy processing pipeline."""
+        while self._processing_active:
+            try:
+                reading = self._processing_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            try:
+                self._process_reading(reading)
+            except Exception as e:
+                logger.error(f"Processing error: {e}")
 
     def set_mode(self, mode: str) -> bool:
         """Set operating mode"""
@@ -195,7 +242,11 @@ class LiDARSLAMApplication:
         return True
 
     def _on_lidar_reading(self, reading: LiDARReading):
-        """Callback for new LiDAR readings"""
+        """Lightweight driver callback: validate and enqueue only.
+
+        Runs on the serial read thread, so it must stay fast. Heavy work is
+        deferred to the processing worker (_processing_loop).
+        """
         if not reading.valid:
             return
 
@@ -221,6 +272,20 @@ class LiDARSLAMApplication:
                 self._reading_count = 0
                 self._last_rate_check = now
 
+        # Enqueue for processing; drop oldest when saturated so the read thread
+        # never blocks on a slow pipeline.
+        try:
+            self._processing_queue.put_nowait(reading)
+        except queue.Full:
+            try:
+                self._processing_queue.get_nowait()  # evict oldest
+                self._processing_queue.put_nowait(reading)
+            except queue.Empty:
+                pass
+            self._dropped_frames += 1
+
+    def _process_reading(self, reading: LiDARReading):
+        """Heavy processing pipeline, runs on the worker thread."""
         # Convert distance to 3D point (assuming forward-facing sensor)
         # In real application, this would use IMU data for proper transformation
         x = reading.distance
@@ -324,6 +389,11 @@ class LiDARSLAMApplication:
             'recording': recording_status,
             'navigation': navigation_status,
             'data_quality': self.data_quality.get_statistics(),
+            'pipeline': {
+                'queue_depth': self._processing_queue.qsize(),
+                'queue_capacity': self._processing_queue.maxsize,
+                'dropped_frames': self._dropped_frames
+            },
             'config': self.config.to_dict()
         }
 
