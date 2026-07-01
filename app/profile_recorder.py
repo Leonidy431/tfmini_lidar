@@ -115,6 +115,12 @@ class ProfileRecorder:
         self.profiles_dir = profiles_dir or Config.PROFILES_DIR
         self.config = config or Config.navigation
 
+        # Quality gating thresholds for waypoints (Data Quality #8)
+        self.min_signal_strength = getattr(Config.lidar, 'signal_threshold', 100)
+        self.min_distance = getattr(Config.lidar, 'min_range', 0.1)
+        self.max_distance = getattr(Config.lidar, 'max_range', 12.0)
+        self.rejected_waypoints = 0
+
         self.current_profile: Optional[NavigationProfile] = None
         self.is_recording = False
         self.start_time: Optional[datetime] = None
@@ -181,12 +187,32 @@ class ProfileRecorder:
             if not self.is_recording or not self.current_profile:
                 return False
 
+            # Quality gate: don't record waypoints built from unreliable
+            # readings (weak signal or out-of-range distance). A polluted
+            # profile misguides playback navigation.
+            quality_ok = (
+                signal_strength >= self.min_signal_strength and
+                self.min_distance <= distance_reading <= self.max_distance
+            )
+            if not quality_ok:
+                self.rejected_waypoints += 1
+                logger.debug(
+                    f"Waypoint rejected (signal={signal_strength}, "
+                    f"distance={distance_reading})"
+                )
+                return False
+
             # Check minimum distance from last waypoint
             pos_array = np.array(position)
             distance_from_last = np.linalg.norm(pos_array - self.last_position)
 
             if distance_from_last < self.config.waypoint_distance_threshold and self.waypoint_counter > 0:
                 return False  # Too close to last waypoint
+
+            # Annotate reading quality for weighted navigation downstream
+            features = features or {}
+            features.setdefault('signal_strength', signal_strength)
+            features.setdefault('quality', 'good')
 
             # Update total distance
             self.total_distance += distance_from_last
@@ -313,6 +339,7 @@ class ProfileRecorder:
             'is_recording': self.is_recording,
             'profile_name': self.current_profile.name if self.current_profile else None,
             'waypoint_count': self.waypoint_counter,
+            'rejected_waypoints': self.rejected_waypoints,
             'total_distance': round(self.total_distance, 2),
             'duration_seconds': (datetime.now() - self.start_time).total_seconds() if self.start_time and self.is_recording else 0
         }

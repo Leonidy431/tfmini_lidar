@@ -52,7 +52,9 @@ class DataQualityValidator:
                  min_samples: int = 10,
                  signal_threshold: int = 100,
                  max_range: float = 12.0,
-                 min_range: float = 0.1):
+                 min_range: float = 0.1,
+                 max_rate_m_per_s: float = 15.0,
+                 temp_coefficient: float = 0.0):
         self.window_size = window_size
         self.iqr_multiplier = iqr_multiplier
         self.z_threshold = z_threshold
@@ -60,9 +62,21 @@ class DataQualityValidator:
         self.signal_threshold = signal_threshold
         self.max_range = max_range
         self.min_range = min_range
+        # Rate-of-change gate: reject physically impossible jumps between
+        # consecutive readings (Data Quality #2). Default tuned for a slow ROV.
+        self.max_rate_m_per_s = max_rate_m_per_s
+        # Optional temperature-drift compensation (Data Quality #3). Default 0
+        # (no-op) since the TFmini-S applies its own internal compensation;
+        # set a coefficient only after empirical calibration.
+        self.temp_coefficient = temp_coefficient
+        self._baseline_temp: Optional[float] = None
 
         # Sliding window of accepted distances (meters)
         self._window: Deque[float] = deque(maxlen=window_size)
+
+        # Last accepted reading for rate-of-change checks
+        self._last_distance: Optional[float] = None
+        self._last_time: Optional[float] = None
 
         # Quality score tracking (rolling over recent decisions)
         self._decisions: Deque[bool] = deque(maxlen=200)
@@ -74,14 +88,30 @@ class DataQualityValidator:
         self.rejected_signal = 0
         self.rejected_iqr = 0
         self.rejected_zscore = 0
+        self.rejected_rate = 0
 
-    def validate(self, distance: float, signal_strength: int) -> QualityResult:
+    def compensate_temperature(self, distance: float, temperature: float) -> float:
+        """Apply optional temperature-drift correction.
+
+        corrected = raw * (1 + coeff * (T - T_baseline)). With the default
+        coefficient of 0 this returns the distance unchanged.
+        """
+        if self.temp_coefficient == 0.0:
+            return distance
+        if self._baseline_temp is None:
+            self._baseline_temp = temperature
+        return distance * (1 + self.temp_coefficient * (temperature - self._baseline_temp))
+
+    def validate(self, distance: float, signal_strength: int,
+                 timestamp: float = None) -> QualityResult:
         """
         Validate a single reading.
 
         Args:
             distance: measured distance in meters
             signal_strength: sensor signal strength (0-65535)
+            timestamp: monotonic seconds; used for rate-of-change gating.
+                When None, the rate check is skipped.
 
         Returns:
             QualityResult indicating whether the reading is accepted.
@@ -95,9 +125,18 @@ class DataQualityValidator:
         if signal_strength < self.signal_threshold:
             return self._reject('low_signal', 'signal')
 
+        # Rate-of-change gate (needs a previous timed reading)
+        if (timestamp is not None and self._last_distance is not None
+                and self._last_time is not None):
+            dt = timestamp - self._last_time
+            if dt > 0:
+                rate = abs(distance - self._last_distance) / dt
+                if rate > self.max_rate_m_per_s:
+                    return self._reject('rate_exceeded', 'rate')
+
         # Need enough history for statistical tests
         if len(self._window) < self.min_samples:
-            self._accept(distance)
+            self._accept(distance, timestamp)
             return QualityResult(
                 accepted=True,
                 reason='insufficient_history',
@@ -124,7 +163,7 @@ class DataQualityValidator:
             if distance < lower or distance > upper:
                 return self._reject('iqr_outlier', 'iqr', z_score)
 
-        self._accept(distance)
+        self._accept(distance, timestamp)
         return QualityResult(
             accepted=True,
             reason='ok',
@@ -132,9 +171,12 @@ class DataQualityValidator:
             quality_score=self.quality_score
         )
 
-    def _accept(self, distance: float):
+    def _accept(self, distance: float, timestamp: float = None):
         self._window.append(distance)
         self._decisions.append(True)
+        self._last_distance = distance
+        if timestamp is not None:
+            self._last_time = timestamp
 
     def _reject(self, reason: str, category: str, z_score: float = 0.0) -> QualityResult:
         self.total_rejected += 1
@@ -148,6 +190,8 @@ class DataQualityValidator:
             self.rejected_iqr += 1
         elif category == 'zscore':
             self.rejected_zscore += 1
+        elif category == 'rate':
+            self.rejected_rate += 1
 
         return QualityResult(
             accepted=False,
@@ -192,12 +236,16 @@ class DataQualityValidator:
         """Clear all state."""
         self._window.clear()
         self._decisions.clear()
+        self._last_distance = None
+        self._last_time = None
+        self._baseline_temp = None
         self.total_checked = 0
         self.total_rejected = 0
         self.rejected_range = 0
         self.rejected_signal = 0
         self.rejected_iqr = 0
         self.rejected_zscore = 0
+        self.rejected_rate = 0
 
     def get_statistics(self) -> dict:
         """Golden-signal-style metrics for data quality."""
@@ -212,6 +260,7 @@ class DataQualityValidator:
                 'range': self.rejected_range,
                 'signal': self.rejected_signal,
                 'iqr': self.rejected_iqr,
-                'zscore': self.rejected_zscore
+                'zscore': self.rejected_zscore,
+                'rate': self.rejected_rate
             }
         }

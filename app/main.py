@@ -137,7 +137,10 @@ class LiDARSLAMApplication:
         self.driver = TFminiSDriver(
             port=self.config.lidar.port,
             baudrate=self.config.lidar.baudrate,
-            timeout=self.config.lidar.timeout
+            timeout=self.config.lidar.timeout,
+            min_signal=self.config.lidar.signal_threshold,
+            min_range_m=self.config.lidar.min_range,
+            max_range_m=self.config.lidar.max_range
         )
 
         if not self.driver.connect():
@@ -255,7 +258,8 @@ class LiDARSLAMApplication:
         # spikes that would otherwise corrupt the SLAM map.
         quality = self.data_quality.validate(
             distance=reading.distance,
-            signal_strength=reading.signal_strength
+            signal_strength=reading.signal_strength,
+            timestamp=reading.timestamp.timestamp()
         )
         if not quality.accepted:
             logger.debug(f"Reading rejected ({quality.reason}): {reading.distance}m")

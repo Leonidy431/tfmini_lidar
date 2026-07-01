@@ -66,10 +66,16 @@ class TFminiSDriver:
     CMD_RESTORE_DEFAULT = bytes([0x10])
     CMD_SAVE_SETTINGS = bytes([0x11])
 
-    def __init__(self, port: str, baudrate: int = 115200, timeout: float = 1.0):
+    def __init__(self, port: str, baudrate: int = 115200, timeout: float = 1.0,
+                 min_signal: int = 0, min_range_m: float = 0.0,
+                 max_range_m: float = 12.0):
         self.port = port
         self.baudrate = baudrate
         self.timeout = timeout
+        # Data-quality gates applied at frame parse time (Data Quality #1, #6)
+        self.min_signal = min_signal
+        self.min_range_m = min_range_m
+        self.max_range_m = max_range_m
 
         self.serial_conn: Optional[serial.Serial] = None
         self.is_running = False
@@ -299,10 +305,11 @@ class TFminiSDriver:
             temp_raw = frame[6] | (frame[7] << 8)
             temperature = temp_raw / 8.0 - 256.0
 
-            # Validate reading
+            # Validate reading against physical + signal-quality gates.
             valid = (distance_cm > 0 and
-                    distance_cm < 1200 and  # Max 12m
-                    strength > 0)
+                    distance_m >= self.min_range_m and
+                    distance_m <= self.max_range_m and
+                    strength >= max(1, self.min_signal))
 
             return LiDARReading(
                 distance=distance_m,

@@ -74,6 +74,45 @@ class TestStatisticalFilters:
         assert rejected < 15
 
 
+class TestRateOfChange:
+    def test_impossible_jump_rejected(self):
+        v = DataQualityValidator(min_samples=5, max_rate_m_per_s=15.0)
+        # Seed a timed reading
+        v.validate(distance=2.0, signal_strength=200, timestamp=100.0)
+        # 10m jump in 1ms -> 10000 m/s, far above the 15 m/s gate
+        result = v.validate(distance=12.0, signal_strength=200, timestamp=100.001)
+        assert result.accepted is False
+        assert result.reason == 'rate_exceeded'
+
+    def test_plausible_change_accepted(self):
+        v = DataQualityValidator(min_samples=5, max_rate_m_per_s=15.0)
+        v.validate(distance=2.0, signal_strength=200, timestamp=100.0)
+        # 0.1m over 100ms = 1 m/s, well within limit
+        result = v.validate(distance=2.1, signal_strength=200, timestamp=100.1)
+        assert result.accepted is True
+
+    def test_no_timestamp_skips_rate(self):
+        v = DataQualityValidator(min_samples=5)
+        v.validate(distance=2.0, signal_strength=200)
+        # Big jump but no timestamp -> rate filter is skipped (may still pass
+        # since history is short)
+        result = v.validate(distance=9.0, signal_strength=200)
+        assert result.reason != 'rate_exceeded'
+
+
+class TestTemperatureCompensation:
+    def test_noop_by_default(self):
+        v = DataQualityValidator()
+        assert v.compensate_temperature(2.0, 30.0) == 2.0
+
+    def test_applies_coefficient(self):
+        v = DataQualityValidator(temp_coefficient=0.001)
+        # First call sets baseline -> no change
+        assert v.compensate_temperature(2.0, 20.0) == 2.0
+        # 10 degrees above baseline -> 2.0 * (1 + 0.001*10) = 2.02
+        assert abs(v.compensate_temperature(2.0, 30.0) - 2.02) < 1e-9
+
+
 class TestQualityScore:
     def test_perfect_stream_scores_high(self):
         v = DataQualityValidator(min_samples=5)
@@ -106,7 +145,7 @@ class TestStatistics:
         assert 'quality_score' in stats
         assert 'rejection_rate' in stats
         assert 'rejected_by' in stats
-        assert set(stats['rejected_by'].keys()) == {'range', 'signal', 'iqr', 'zscore'}
+        assert set(stats['rejected_by'].keys()) == {'range', 'signal', 'iqr', 'zscore', 'rate'}
 
     def test_rejection_counters(self):
         v = DataQualityValidator(min_range=0.1, max_range=12.0, signal_threshold=100)
