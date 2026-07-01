@@ -430,6 +430,50 @@ def ws_emit(event: str, data: dict):
 lidar_app.websocket_callback = ws_emit
 
 
+# ============ Standard Error Handling ============
+
+def error_response(code: str, message: str, status: int, details: dict = None):
+    """Build a standardized error response body (API Design #2).
+
+    Shape: {"error": {"code": str, "message": str, "details"?: object}}
+    """
+    body = {'error': {'code': code, 'message': message}}
+    if details:
+        body['error']['details'] = details
+    return jsonify(body), status
+
+
+@app.errorhandler(400)
+def handle_400(e):
+    return error_response('bad_request', getattr(e, 'description', 'Bad request'), 400)
+
+
+@app.errorhandler(401)
+def handle_401(e):
+    return error_response('unauthorized', 'Authentication required', 401)
+
+
+@app.errorhandler(404)
+def handle_404(e):
+    return error_response('not_found', 'Resource not found', 404)
+
+
+@app.errorhandler(405)
+def handle_405(e):
+    return error_response('method_not_allowed', 'Method not allowed', 405)
+
+
+@app.errorhandler(429)
+def handle_429(e):
+    return error_response('rate_limited', 'Rate limit exceeded', 429)
+
+
+@app.errorhandler(500)
+def handle_500(e):
+    logger.exception("Unhandled server error")
+    return error_response('internal_error', 'Internal server error', 500)
+
+
 # ============ REST API Routes ============
 
 @app.before_request
@@ -844,6 +888,30 @@ def on_get_map_points():
     points = lidar_app.slam_engine.get_map_downsampled(voxel_size=0.1)
     if points is not None:
         emit('map_points', {'points': points.tolist()})
+
+
+# ============ API Versioning ============
+
+def _register_versioned_aliases():
+    """Expose every /api/<x> route also as /api/v1/<x> (API Design #1).
+
+    The unversioned paths remain for backward compatibility; /api/v1 is the
+    canonical prefix going forward.
+    """
+    for rule in list(app.url_map.iter_rules()):
+        if rule.rule.startswith('/api/') and not rule.rule.startswith('/api/v1/'):
+            versioned = rule.rule.replace('/api/', '/api/v1/', 1)
+            view = app.view_functions[rule.endpoint]
+            methods = sorted(rule.methods - {'HEAD', 'OPTIONS'})
+            app.add_url_rule(
+                versioned,
+                endpoint=f'v1_{rule.endpoint}',
+                view_func=view,
+                methods=methods
+            )
+
+
+_register_versioned_aliases()
 
 
 # ============ Main Entry Point ============
