@@ -54,19 +54,24 @@ function setupEventListeners() {
     });
 
     // System controls
-    document.getElementById('startBtn')?.addEventListener('click', async () => {
-        const result = await startApp();
+    document.getElementById('startBtn')?.addEventListener('click', async (e) => {
+        const result = await withLoading(e.currentTarget, startApp);
         if (result.success) {
             addLog('Application started');
+            showToast('Application started', 'success');
         } else {
             addLog('Failed to start: ' + (result.error || 'Unknown error'));
+            showToast('Failed to start: ' + (result.error || 'Unknown error'), 'error');
         }
     });
 
-    document.getElementById('stopBtn')?.addEventListener('click', async () => {
-        const result = await stopApp();
+    document.getElementById('stopBtn')?.addEventListener('click', async (e) => {
+        const result = await withLoading(e.currentTarget, stopApp);
         if (result.success) {
             addLog('Application stopped');
+            showToast('Application stopped', 'info');
+        } else {
+            showToast('Failed to stop: ' + (result.error || 'Unknown error'), 'error');
         }
     });
 
@@ -240,7 +245,15 @@ function setupEventListeners() {
  */
 function setupWebSocket() {
     try {
-        socket = io();
+        // Automatic reconnection with exponential backoff (UX #1). Pass the
+        // API token so the handshake succeeds when REQUIRE_WS_AUTH is on.
+        socket = io({
+            reconnection: true,
+            reconnectionAttempts: 10,
+            reconnectionDelay: 1000,
+            reconnectionDelayMax: 5000,
+            auth: { token: getApiToken() }
+        });
 
         socket.on('connect', () => {
             console.log('WebSocket connected');
@@ -251,6 +264,21 @@ function setupWebSocket() {
         socket.on('disconnect', () => {
             console.log('WebSocket disconnected');
             document.getElementById('statusIndicator')?.classList.remove('active');
+            addLog('WebSocket disconnected - reconnecting...');
+        });
+
+        socket.io.on('reconnect_attempt', (n) => {
+            addLog(`Reconnection attempt ${n}...`);
+        });
+
+        socket.io.on('reconnect', () => {
+            showToast('Connection restored', 'success');
+            // Resync state with the server after reconnection
+            updateStatus();
+        });
+
+        socket.io.on('reconnect_failed', () => {
+            showToast('Could not reconnect. Check the connection and refresh.', 'error', 8000);
         });
 
         socket.on('status', (data) => {
@@ -628,6 +656,52 @@ async function loadObjects() {
 }
 
 /**
+ * Toast notification system for user-facing errors/success (UX #2).
+ */
+function showToast(message, type = 'info', duration = 4000) {
+    let container = document.getElementById('toastContainer');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toastContainer';
+        container.className = 'toast-container';
+        container.setAttribute('aria-live', 'polite');
+        document.body.appendChild(container);
+    }
+
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.setAttribute('role', 'status');
+    toast.textContent = message;
+    container.appendChild(toast);
+
+    // Trigger enter transition
+    requestAnimationFrame(() => toast.classList.add('toast-visible'));
+
+    setTimeout(() => {
+        toast.classList.remove('toast-visible');
+        setTimeout(() => toast.remove(), 300);
+    }, duration);
+}
+
+/**
+ * Wrap an async button action with a loading/disabled state (UX #8).
+ */
+async function withLoading(btn, asyncFn) {
+    if (!btn) return asyncFn();
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.dataset.loading = 'true';
+    btn.textContent = 'Working...';
+    try {
+        return await asyncFn();
+    } finally {
+        btn.disabled = false;
+        delete btn.dataset.loading;
+        btn.textContent = original;
+    }
+}
+
+/**
  * Reflect API token presence in the UI (never display the token itself).
  */
 function updateTokenStatus() {
@@ -668,4 +742,7 @@ window.addEventListener('beforeunload', () => {
     if (socket) {
         socket.disconnect();
     }
+    // Release Three.js / canvas resources to avoid WebGL context leaks
+    mappingVisualizer?.destroy?.();
+    localizationVisualizer?.destroy?.();
 });

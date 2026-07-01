@@ -23,6 +23,11 @@ class PointCloudVisualizer {
         this.showGrid = true;
         this.showAxes = true;
 
+        this._animationId = null;
+        this._markers = [];
+        this._resizeObserver = null;
+        this._onResizeBound = () => this.onResize();
+
         this.init();
     }
 
@@ -61,11 +66,27 @@ class PointCloudVisualizer {
         // Controls (simple orbit simulation)
         this.setupControls();
 
-        // Handle resize
-        window.addEventListener('resize', () => this.onResize());
+        // Handle resize: prefer ResizeObserver (fires on container/layout
+        // changes, not just window), fall back to window resize.
+        if (typeof ResizeObserver !== 'undefined') {
+            this._resizeObserver = new ResizeObserver(() => this._debouncedResize());
+            this._resizeObserver.observe(this.container);
+        } else {
+            window.addEventListener('resize', this._onResizeBound);
+        }
 
         // Start animation loop
         this.animate();
+    }
+
+    _debouncedResize() {
+        // Coalesce rapid resize events to the next animation frame
+        if (this._resizePending) return;
+        this._resizePending = true;
+        requestAnimationFrame(() => {
+            this._resizePending = false;
+            this.onResize();
+        });
     }
 
     setupControls() {
@@ -189,6 +210,7 @@ class PointCloudVisualizer {
         const marker = new THREE.Mesh(geometry, material);
         marker.position.set(position[0], position[1], position[2]);
         this.scene.add(marker);
+        this._markers.push(marker);
         return marker;
     }
 
@@ -239,8 +261,49 @@ class PointCloudVisualizer {
     }
 
     animate() {
-        requestAnimationFrame(() => this.animate());
+        this._animationId = requestAnimationFrame(() => this.animate());
         this.renderer.render(this.scene, this.camera);
+    }
+
+    /**
+     * Release all GPU/DOM resources. Call before discarding the visualizer
+     * (e.g. page unload) to avoid WebGL context and memory leaks.
+     */
+    destroy() {
+        if (this._animationId !== null) {
+            cancelAnimationFrame(this._animationId);
+            this._animationId = null;
+        }
+
+        if (this._resizeObserver) {
+            this._resizeObserver.disconnect();
+            this._resizeObserver = null;
+        } else {
+            window.removeEventListener('resize', this._onResizeBound);
+        }
+
+        // Dispose point cloud, trajectory, and markers
+        [this.pointCloud, this.trajectory, ...this._markers].forEach(obj => {
+            if (!obj) return;
+            this.scene.remove(obj);
+            if (obj.geometry) obj.geometry.dispose();
+            if (obj.material) obj.material.dispose();
+        });
+        this._markers = [];
+
+        if (this.gridHelper) { this.gridHelper.geometry?.dispose(); this.gridHelper.material?.dispose(); }
+        if (this.axesHelper) { this.axesHelper.geometry?.dispose(); this.axesHelper.material?.dispose(); }
+
+        if (this.renderer) {
+            this.renderer.dispose();
+            if (this.renderer.domElement && this.renderer.domElement.parentNode) {
+                this.renderer.domElement.parentNode.removeChild(this.renderer.domElement);
+            }
+            this.renderer = null;
+        }
+
+        this.scene = null;
+        this.camera = null;
     }
 }
 
@@ -264,8 +327,13 @@ class LocalizationVisualizer {
         this.offsetX = 0;
         this.offsetY = 0;
 
+        this._onResizeBound = () => this.resize();
         this.resize();
-        window.addEventListener('resize', () => this.resize());
+        window.addEventListener('resize', this._onResizeBound);
+    }
+
+    destroy() {
+        window.removeEventListener('resize', this._onResizeBound);
     }
 
     resize() {

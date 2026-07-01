@@ -15,12 +15,12 @@
             <h1>LiDAR SLAM Module</h1>
             <span class="subtitle">Navigation & Object Detection</span>
         </div>
-        <div class="navbar-menu">
-            <a href="#dashboard" class="nav-link active" data-tab="dashboard">Dashboard</a>
-            <a href="#mapping" class="nav-link" data-tab="mapping">Mapping</a>
-            <a href="#navigation" class="nav-link" data-tab="navigation">Navigation</a>
-            <a href="#objects" class="nav-link" data-tab="objects">Objects</a>
-            <div class="status-indicator" id="statusIndicator"></div>
+        <div class="navbar-menu" role="tablist">
+            <a href="#dashboard" class="nav-link active" data-tab="dashboard" role="tab" aria-label="Dashboard tab">Dashboard</a>
+            <a href="#mapping" class="nav-link" data-tab="mapping" role="tab" aria-label="Mapping tab">Mapping</a>
+            <a href="#navigation" class="nav-link" data-tab="navigation" role="tab" aria-label="Navigation tab">Navigation</a>
+            <a href="#objects" class="nav-link" data-tab="objects" role="tab" aria-label="Objects tab">Objects</a>
+            <div class="status-indicator" id="statusIndicator" role="status" aria-label="Connection status" title="Connection status"></div>
         </div>
     </nav>
 
