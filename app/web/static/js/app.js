@@ -25,6 +25,9 @@ function initializeApp() {
     console.log('Initializing BlueOS LiDAR SLAM...');
     addLog('System initialized');
 
+    // Reflect stored API token status
+    updateTokenStatus();
+
     // Initialize 3D visualizer for mapping
     mappingVisualizer = new PointCloudVisualizer('mappingCanvas');
 
@@ -70,6 +73,15 @@ function setupEventListeners() {
     document.getElementById('refreshBtn')?.addEventListener('click', () => {
         updateStatus();
         addLog('Status refreshed');
+    });
+
+    // API token
+    document.getElementById('saveTokenBtn')?.addEventListener('click', () => {
+        const token = document.getElementById('apiTokenInput').value.trim();
+        setApiToken(token);
+        document.getElementById('apiTokenInput').value = '';
+        updateTokenStatus();
+        addLog(token ? 'API token saved' : 'API token cleared');
     });
 
     // Mapping controls
@@ -316,6 +328,16 @@ function updateStatusDisplay(status) {
     // Readings per second
     document.getElementById('readingsPerSec').textContent = status.readings_per_second || 0;
 
+    // Data quality score
+    if (status.data_quality) {
+        const dqEl = document.getElementById('dataQuality');
+        if (dqEl) {
+            const score = status.data_quality.quality_score;
+            dqEl.textContent = `${(score * 100).toFixed(0)}%`;
+            dqEl.style.color = score >= 0.9 ? '#26c281' : (score >= 0.7 ? '#f5a623' : '#ff6b6b');
+        }
+    }
+
     // Mapping stats
     if (status.slam) {
         document.getElementById('mappedPoints').textContent = status.slam.total_points || 0;
@@ -477,16 +499,16 @@ async function loadMaps() {
     container.innerHTML = maps.map(map => `
         <div class="map-item">
             <div class="item-header">
-                <span class="item-name">${map.name}</span>
+                <span class="item-name">${escapeHtml(map.name)}</span>
             </div>
             <div class="item-meta">
-                ${map.point_count || 0} points | ${formatTimestamp(map.created)}
+                ${escapeHtml(map.point_count || 0)} points | ${escapeHtml(formatTimestamp(map.created))}
             </div>
             <div class="item-actions">
-                <button class="btn btn-sm btn-primary" onclick="loadMapForLocalization('${map.name}')">
+                <button class="btn btn-sm btn-primary" onclick="loadMapForLocalization('${escapeJsString(map.name)}')">
                     Load
                 </button>
-                <button class="btn btn-sm btn-danger" onclick="deleteMapItem('${map.name}')">
+                <button class="btn btn-sm btn-danger" onclick="deleteMapItem('${escapeJsString(map.name)}')">
                     Delete
                 </button>
             </div>
@@ -532,15 +554,15 @@ async function loadProfiles() {
         container.innerHTML = profiles.map(profile => `
             <div class="profile-item">
                 <div class="item-header">
-                    <span class="item-name">${profile.name}</span>
+                    <span class="item-name">${escapeHtml(profile.name)}</span>
                 </div>
                 <div class="item-meta">
-                    ${profile.waypoint_count || 0} waypoints |
-                    ${(profile.total_distance || 0).toFixed(1)}m |
-                    ${formatTimestamp(profile.created)}
+                    ${escapeHtml(profile.waypoint_count || 0)} waypoints |
+                    ${escapeHtml((profile.total_distance || 0).toFixed(1))}m |
+                    ${escapeHtml(formatTimestamp(profile.created))}
                 </div>
                 <div class="item-actions">
-                    <button class="btn btn-sm btn-danger" onclick="deleteProfileItem('${profile.name}')">
+                    <button class="btn btn-sm btn-danger" onclick="deleteProfileItem('${escapeJsString(profile.name)}')">
                         Delete
                     </button>
                 </div>
@@ -551,7 +573,9 @@ async function loadProfiles() {
     // Update select dropdown
     if (select) {
         select.innerHTML = '<option value="">Select a profile...</option>' +
-            (profiles || []).map(p => `<option value="${p.name}">${p.name}</option>`).join('');
+            (profiles || []).map(p =>
+                `<option value="${escapeHtml(p.name)}">${escapeHtml(p.name)}</option>`
+            ).join('');
     }
 
     // Enable/disable navigation button
@@ -586,12 +610,12 @@ async function loadObjects() {
     container.innerHTML = data.objects.map(obj => `
         <div class="object-item">
             <div class="item-header">
-                <span class="item-name">${obj.class}</span>
-                <span style="color: var(--color-secondary);">${(obj.confidence * 100).toFixed(0)}%</span>
+                <span class="item-name">${escapeHtml(obj.class)}</span>
+                <span style="color: var(--color-secondary);">${escapeHtml((obj.confidence * 100).toFixed(0))}%</span>
             </div>
             <div class="item-meta">
-                Distance: ${obj.distance.toFixed(2)}m |
-                Position: (${obj.position.map(p => p.toFixed(2)).join(', ')})
+                Distance: ${escapeHtml(obj.distance.toFixed(2))}m |
+                Position: (${escapeHtml(obj.position.map(p => p.toFixed(2)).join(', '))})
             </div>
         </div>
     `).join('');
@@ -601,6 +625,17 @@ async function loadObjects() {
         const pattern = data.statistics.pattern_analysis;
         document.getElementById('currentPattern').textContent = pattern.pattern_type || '--';
     }
+}
+
+/**
+ * Reflect API token presence in the UI (never display the token itself).
+ */
+function updateTokenStatus() {
+    const el = document.getElementById('tokenStatus');
+    if (!el) return;
+    const hasToken = !!getApiToken();
+    el.textContent = hasToken ? 'Token set' : 'Not set';
+    el.style.color = hasToken ? '#26c281' : '#ff6b6b';
 }
 
 /**

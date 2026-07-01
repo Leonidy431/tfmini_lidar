@@ -638,3 +638,31 @@ select:focus {
         padding: 1rem;
     }
 }
+
+/* API token & hint styling */
+.hint {
+    font-size: 0.85rem;
+    color: var(--color-text-muted, #8a94a6);
+    margin: 0 0 0.5rem 0;
+}
+
+.hint code {
+    background: rgba(255, 255, 255, 0.08);
+    padding: 0.1rem 0.35rem;
+    border-radius: 3px;
+    font-family: monospace;
+}
+
+#apiTokenInput {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--color-border, #2a3142);
+    border-radius: 4px;
+    background: var(--color-bg-input, #1a1f2e);
+    color: var(--color-text, #e4e8f0);
+    min-width: 220px;
+}
+
+#apiTokenInput:focus {
+    outline: none;
+    border-color: var(--color-primary, #3a7afe);
+}

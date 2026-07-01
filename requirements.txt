@@ -1,13 +1,17 @@
 # Web Framework
-flask==3.0.0
-flask-cors==4.0.0
+# flask 3.0.3 + werkzeug >=3.0.6 pin closes CVE-2024-34069 (debugger RCE)
+# and CVE-2024-49767 (multipart resource exhaustion).
+flask==3.0.3
+werkzeug>=3.0.6
+# flask-cors 5.0.0 closes CVE-2024-6221 and CVE-2024-1681.
+flask-cors==5.0.0
 flask-socketio==5.3.6
 
 # Serial Communication
 pyserial==3.5
 
 # Scientific Computing
-numpy==1.24.3
+numpy==1.26.4
 scipy==1.11.4
 
 # Point Cloud Processing
@@ -17,7 +21,9 @@ open3d==0.18.0
 pymavlink==2.4.41
 
 # Async Support
-aiohttp==3.9.1
+# aiohttp 3.10.11 closes multiple CVEs (request smuggling, XSS in static
+# file handler, DoS) present in 3.9.x.
+aiohttp==3.10.11
 asyncio-mqtt==0.16.2
 
 # WebSocket
@@ -30,7 +36,8 @@ h5py==3.10.0
 # Utilities
 python-dateutil==2.8.2
 pyyaml==6.0.1
-requests==2.31.0
+# requests 2.32.3 closes CVE-2024-35195 (cert verification bypass on reuse).
+requests==2.32.3
 
 # Testing
 pytest==7.4.3

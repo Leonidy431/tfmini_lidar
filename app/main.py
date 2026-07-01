@@ -23,6 +23,7 @@ from app.localization import LocalizationEngine
 from app.map_manager import MapManager
 from app.profile_recorder import ProfileRecorder, ProfileNavigator
 from app.object_detection import ObjectDetector
+from app.data_quality import DataQualityValidator
 from app.security import (
     require_auth, require_rate_limit, init_default_token,
     is_public_route, validate_path_component
@@ -70,6 +71,13 @@ class LiDARSLAMApplication:
         self.profile_recorder = ProfileRecorder(self.config.PROFILES_DIR)
         self.profile_navigator = ProfileNavigator(self.config.navigation)
         self.object_detector = ObjectDetector(self.config.object_detection)
+
+        # Data quality validation (Rule 4: IQR + Z-score outlier filtering)
+        self.data_quality = DataQualityValidator(
+            signal_threshold=self.config.lidar.signal_threshold,
+            max_range=self.config.lidar.max_range,
+            min_range=self.config.lidar.min_range
+        )
 
         # Thread safety locks
         self._state_lock = threading.RLock()
@@ -191,6 +199,17 @@ class LiDARSLAMApplication:
         if not reading.valid:
             return
 
+        # Rule 4: reject statistical outliers before any downstream processing.
+        # Turbidity/multipath in the underwater environment produces spurious
+        # spikes that would otherwise corrupt the SLAM map.
+        quality = self.data_quality.validate(
+            distance=reading.distance,
+            signal_strength=reading.signal_strength
+        )
+        if not quality.accepted:
+            logger.debug(f"Reading rejected ({quality.reason}): {reading.distance}m")
+            return
+
         with self._reading_lock:
             self.last_reading = reading
             self._reading_count += 1
@@ -304,6 +323,7 @@ class LiDARSLAMApplication:
             'object_detection': detection_stats,
             'recording': recording_status,
             'navigation': navigation_status,
+            'data_quality': self.data_quality.get_statistics(),
             'config': self.config.to_dict()
         }
 

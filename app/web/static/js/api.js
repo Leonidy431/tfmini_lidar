@@ -6,15 +6,40 @@
 const API_BASE = '/api';
 
 /**
+ * API token management.
+ * The token is stored in localStorage and sent with every request as a
+ * Bearer token. Configure it once via setApiToken() (e.g. from a settings
+ * field) or it can be injected by BlueOS at page load.
+ */
+function getApiToken() {
+    return localStorage.getItem('lidar_api_token') || '';
+}
+
+function setApiToken(token) {
+    if (token) {
+        localStorage.setItem('lidar_api_token', token);
+    } else {
+        localStorage.removeItem('lidar_api_token');
+    }
+}
+
+/**
  * Generic API call function
  */
 async function apiCall(endpoint, method = 'GET', data = null) {
     try {
+        const headers = {
+            'Content-Type': 'application/json',
+        };
+
+        const token = getApiToken();
+        if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+        }
+
         const options = {
             method: method,
-            headers: {
-                'Content-Type': 'application/json',
-            }
+            headers: headers,
         };
 
         if (data && method !== 'GET') {
@@ -25,6 +50,12 @@ async function apiCall(endpoint, method = 'GET', data = null) {
 
         if (!response.ok) {
             console.error(`API error: ${response.status}`);
+            if (response.status === 401) {
+                return { success: false, error: 'Authentication required. Set your API token.', unauthorized: true };
+            }
+            if (response.status === 429) {
+                return { success: false, error: 'Rate limit exceeded. Slow down.' };
+            }
             const errorData = await response.json().catch(() => ({}));
             return { success: false, error: errorData.error || `HTTP ${response.status}` };
         }
@@ -157,6 +188,38 @@ async function saveObjects() {
 }
 
 // ========== Utility Functions ==========
+
+/**
+ * Escape a string for safe insertion into HTML.
+ * Prevents XSS when rendering user/sensor-controlled data via innerHTML.
+ */
+function escapeHtml(value) {
+    if (value === null || value === undefined) {
+        return '';
+    }
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+/**
+ * Escape a string for safe use inside a single-quoted JS string in an
+ * inline event handler (e.g. onclick="fn('...')").
+ */
+function escapeJsString(value) {
+    if (value === null || value === undefined) {
+        return '';
+    }
+    return String(value)
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/"/g, '\\"')
+        .replace(/</g, '\\x3C')
+        .replace(/>/g, '\\x3E');
+}
 
 function formatTimestamp(isoString) {
     const date = new Date(isoString);

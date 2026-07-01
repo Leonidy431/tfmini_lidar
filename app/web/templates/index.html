@@ -47,6 +47,10 @@
                         <span class="status-label">Readings/sec</span>
                         <span class="status-value" id="readingsPerSec">0</span>
                     </div>
+                    <div class="status-card">
+                        <span class="status-label">Data Quality</span>
+                        <span class="status-value" id="dataQuality">--</span>
+                    </div>
                 </div>
             </section>
 
@@ -56,6 +60,16 @@
                     <button class="btn btn-success" id="startBtn">Start</button>
                     <button class="btn btn-danger" id="stopBtn">Stop</button>
                     <button class="btn btn-secondary" id="refreshBtn">Refresh</button>
+                </div>
+            </section>
+
+            <section class="controls-section">
+                <h2>API Token</h2>
+                <p class="hint">Required for control actions. Shown in the container startup logs, or set via <code>LIDAR_API_TOKEN</code>.</p>
+                <div class="button-group">
+                    <input type="password" id="apiTokenInput" placeholder="Enter API token" autocomplete="off">
+                    <button class="btn btn-primary" id="saveTokenBtn">Save Token</button>
+                    <span class="status-value" id="tokenStatus">Not set</span>
                 </div>
             </section>
 

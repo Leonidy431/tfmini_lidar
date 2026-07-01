@@ -13,6 +13,7 @@ TFmini-S LiDAR integration for BlueOS underwater ROV navigation with SLAM mappin
 - `app/object_detection.py` - Pattern-based obstacle classification
 - `app/localization.py` - Map-based position estimation
 - `app/security.py` - Authentication, rate limiting, path traversal protection
+- `app/data_quality.py` - IQR/Z-score outlier filtering (Rule 4)
 - `Dockerfile` - BlueOS Docker extension
 - `PATENT.md` - Patent declaration and IP documentation
 
