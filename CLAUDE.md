@@ -139,11 +139,14 @@ Before SLAM processing:
 
 ### Rule 5: Risk Management (ISO 14971)
 
-Maintain hazard analysis for:
+Maintain hazard analysis in `RISK_MANAGEMENT.md` for:
 - TFmini-S sensor failures (laser safety, measurement errors)
 - Underwater interference (turbidity, multipath)
 - Communication dropouts
 - Navigation algorithm failures
+
+Each hazard tracks Severity × Probability, design controls (mapped to source),
+and accepted residual risk. Update before every release.
 
 ---
 
