@@ -6,21 +6,37 @@ services:
     image: blueos-lidar-slam:latest
     container_name: blueos-lidar-slam
     restart: unless-stopped
-    privileged: true
+    # No privileged mode; grant only the capability needed for raw serial I/O.
+    cap_add:
+      - SYS_RAWIO
     network_mode: host
     ports:
       - "5000:5000"
     volumes:
-      - ./data:/app/data
-      - /dev:/dev
+      # Named data volume instead of a broad bind mount (Volume Security #7)
+      - lidar-data:/app/data
     devices:
+      # Explicit device mapping only; no full /dev mount
       - /dev/ttyUSB0:/dev/ttyUSB0
       - /dev/ttyUSB1:/dev/ttyUSB1
     environment:
       - DEBUG=false
       - LIDAR_PORT=/dev/ttyUSB0
       - FLASK_ENV=production
+      # Set a strong token on shared networks; leave unset for auto-generated.
+      # - LIDAR_API_TOKEN=change-me
+      # - CORS_ORIGINS=http://blueos.local,http://localhost:5000
+      # - REQUIRE_WS_AUTH=true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
     labels:
       - "blueos.extension.name=LiDAR SLAM Module"
       - "blueos.extension.description=Real-time mapping, navigation and object detection with TFmini-S LiDAR"
-      - "blueos.extension.version=1.0.0"
+      - "blueos.extension.version=1.0.1"
+
+volumes:
+  lidar-data:

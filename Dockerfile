@@ -1,32 +1,52 @@
-FROM python:3.11-slim-bullseye
+# ---- Build stage: compile wheels with build toolchain ----
+FROM python:3.11-slim-bullseye AS builder
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY requirements.txt .
+# Build wheels so the runtime image needs no compiler
+RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
+
+
+# ---- Runtime stage: minimal image, no build tools ----
+FROM python:3.11-slim-bullseye AS runtime
+
+# Runtime-only shared libraries (Open3D needs GL/glib) + curl for healthcheck
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     libgl1-mesa-glx \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
-    libxrender-dev \
+    libxrender1 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy requirements first for caching
+# Install prebuilt wheels
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY --from=builder /wheels /wheels
+RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt \
+    && rm -rf /wheels
 
-# Copy application
+# Copy application only (tests excluded via .dockerignore)
 COPY app/ ./app/
-COPY tests/ ./tests/
+
+# Run as a non-root user; grant access to serial devices via the dialout group
+RUN useradd -r -u 1000 -g dialout -d /app lidar \
+    && mkdir -p /app/data \
+    && chown -R lidar:dialout /app
+USER lidar
 
 # Expose port
 EXPOSE 5000
 
 # Health check endpoint
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
   CMD curl -f http://localhost:5000/api/health || exit 1
 
 # BlueOS Labels
