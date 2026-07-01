@@ -6,6 +6,11 @@ For single-point LiDAR, this works by analyzing:
 - Distance patterns over time
 - Signal strength variations
 - Spatial clusters in accumulated point clouds
+
+Algorithm attribution (prior art):
+- Density-based clustering: M. Ester, H.-P. Kriegel, J. Sander, X. Xu,
+  "A Density-Based Algorithm for Discovering Clusters", KDD, 1996.
+See docs/ALGORITHMS.md and LICENSES.md.
 """
 
 import numpy as np

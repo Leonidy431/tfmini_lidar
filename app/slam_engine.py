@@ -4,6 +4,11 @@ SLAM Engine Module
 Implements scan-to-scan ICP registration for mapping with single-point LiDAR.
 Since TFmini-S is a single-point sensor, we accumulate readings with motion
 estimation to create pseudo-scans.
+
+Algorithm attribution (prior art):
+- ICP registration: P. Besl and N. McKay, "A Method for Registration of 3-D
+  Shapes", IEEE PAMI, 1992. Implementation via Open3D (MIT license).
+See docs/ALGORITHMS.md and LICENSES.md.
 """
 
 import numpy as np
