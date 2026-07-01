@@ -169,7 +169,29 @@ These controls are **required** for the residual-risk acceptance above to hold:
 
 ---
 
-## 5. Traceability
+## 5. Maritime Standards Compliance Status
+
+Honest status of maritime/safety standards raised in the audit. This product is
+a **supervised navigation aid**, not certified bridge equipment; several
+standards are therefore roadmap or not-applicable rather than met. Claiming
+otherwise would be misleading.
+
+| Standard | Scope | Status | Notes |
+|----------|-------|--------|-------|
+| ISO 14971 | Risk management | **Partial** | Hazard analysis in this file; formal V&V pending |
+| IEC 60945 (temp envelope) | Maritime equipment env. | **Partial** | Temperature envelope monitored in health (-15..+55C); no certified enclosure |
+| Safe-state on failure (DNV-CG-0264 spirit) | Fail-safe | **Implemented** | Sensor failure in active mode forces IDLE + alarm (`safety_alarm` event) |
+| IMO MSC-FAL.1/Circ.3 (cyber) | Cyber risk | **Partial** | Auth, rate limiting, input validation, path safety implemented; formal cyber risk assessment pending |
+| IEC 61508 (SIL) | Functional safety integrity | **Not applicable** | No SIL rating claimed; advisory-only system, human-in-the-loop |
+| COLREGs / SOLAS Ch.V | Collision rules / AIS | **Not applicable** | Not an autonomous controller; no AIS integration |
+| IMO MSC.302(87) alarms | Alarm priorities | **Roadmap** | `safety_alarm` uses a priority field; full alarm mgmt (ack/persistence) not implemented |
+| ISO 13485 config mgmt | Config change control | **Partial** | Config in versioned source; no cryptographic parameter hashing |
+
+**Roadmap items** must be completed and re-assessed before any safety-certified
+or autonomous deployment. Until then, the required operational controls in
+Section 4 (human supervision) are mandatory compensating controls.
+
+## 6. Traceability
 
 Every design control above maps to source. Post-market: re-run the 99-point blind
 spot audit (Rule 1) before each release and fold new hazards into this file.

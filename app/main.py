@@ -158,13 +158,36 @@ class LiDARSLAMApplication:
         logger.info("Application initialized successfully")
         return True
 
+    # Modes where losing the sensor is a safety concern
+    ACTIVE_MODES = (MODE_MAPPING, MODE_LOCALIZING, MODE_NAVIGATING, MODE_RECORDING)
+
     def _on_driver_error(self, context: str, exc: Exception):
-        """Broadcast driver errors and current health to WebSocket clients."""
+        """Broadcast driver errors and enforce a safe state (Maritime #2).
+
+        If the sensor has failed while an active guidance/mapping mode is
+        running, transition to IDLE and raise an alarm so stale data cannot
+        drive navigation.
+        """
+        health = self.get_health()
+
+        if health['state'] == 'failed' and self.mode in self.ACTIVE_MODES:
+            previous_mode = self.mode
+            self.set_mode(self.MODE_IDLE)
+            logger.error(
+                f"SAFETY: sensor failed during {previous_mode}; forced IDLE"
+            )
+            if self.websocket_callback:
+                self.websocket_callback('safety_alarm', {
+                    'priority': 'alarm',
+                    'message': f'Sensor failure during {previous_mode}; system moved to IDLE',
+                    'previous_mode': previous_mode
+                })
+
         if self.websocket_callback:
             self.websocket_callback('driver_error', {
                 'context': context,
                 'message': str(exc),
-                'health': self.get_health()
+                'health': health
             })
 
     def start(self) -> bool:
@@ -398,13 +421,20 @@ class LiDARSLAMApplication:
         dq = self.data_quality.quality_score
         reconnecting = lidar_stats.get('reconnect_attempts', 0) > 0
 
+        # Temperature envelope check (IEC 60945 Category D: -15C..+55C)
+        temp_out_of_range = False
+        last = self.last_reading
+        if last is not None:
+            if last.temperature < -15.0 or last.temperature > 55.0:
+                temp_out_of_range = True
+
         reasons = []
         state = 'healthy'
 
         if self.is_running and not connected:
             state = 'failed'
             reasons.append('sensor_disconnected')
-        elif reconnecting or error_rate > 0.1 or dq < 0.7:
+        elif reconnecting or error_rate > 0.1 or dq < 0.7 or temp_out_of_range:
             state = 'degraded'
             if reconnecting:
                 reasons.append('reconnecting')
@@ -412,6 +442,8 @@ class LiDARSLAMApplication:
                 reasons.append('high_error_rate')
             if dq < 0.7:
                 reasons.append('low_data_quality')
+            if temp_out_of_range:
+                reasons.append('temperature_out_of_range')
 
         return {
             'state': state,
