@@ -342,23 +342,29 @@ class ProfileNavigator:
         self.heading_deviation = 0.0
         self.distance_deviation = 0.0
 
+        # Thread safety: update() runs on the LiDAR callback thread while
+        # start/stop/get_status run on Flask request threads.
+        self.lock = threading.Lock()
+
     def start_navigation(self, profile: NavigationProfile) -> bool:
         """Start navigating using a profile"""
         if not profile or not profile.waypoints:
             logger.error("Invalid profile for navigation")
             return False
 
-        self.current_profile = profile
-        self.current_waypoint_index = 0
-        self.is_navigating = True
-        self.progress_percent = 0.0
+        with self.lock:
+            self.current_profile = profile
+            self.current_waypoint_index = 0
+            self.is_navigating = True
+            self.progress_percent = 0.0
 
         logger.info(f"Started navigation with profile: {profile.name}")
         return True
 
     def stop_navigation(self):
         """Stop navigation"""
-        self.is_navigating = False
+        with self.lock:
+            self.is_navigating = False
         logger.info("Navigation stopped")
 
     def update(self,
@@ -375,52 +381,53 @@ class ProfileNavigator:
         - distance_match: How well current reading matches expected
         - status: 'on_track', 'off_course', 'approaching', 'reached', 'completed'
         """
-        if not self.is_navigating or not self.current_profile:
-            return {'status': 'not_navigating'}
+        with self.lock:
+            if not self.is_navigating or not self.current_profile:
+                return {'status': 'not_navigating'}
 
-        if self.current_waypoint_index >= len(self.current_profile.waypoints):
-            return {'status': 'completed', 'progress': 100.0}
+            if self.current_waypoint_index >= len(self.current_profile.waypoints):
+                return {'status': 'completed', 'progress': 100.0}
 
-        # Get target waypoint
-        target_wp = self.current_profile.waypoints[self.current_waypoint_index]
+            # Get target waypoint
+            target_wp = self.current_profile.waypoints[self.current_waypoint_index]
 
-        # Calculate distance to waypoint
-        current_pos = np.array(current_position)
-        target_pos = np.array(target_wp.position)
-        self.distance_to_waypoint = np.linalg.norm(current_pos - target_pos)
+            # Calculate distance to waypoint
+            current_pos = np.array(current_position)
+            target_pos = np.array(target_wp.position)
+            self.distance_to_waypoint = np.linalg.norm(current_pos - target_pos)
 
-        # Calculate heading error
-        self.heading_error = self._normalize_angle(target_wp.heading - current_heading)
+            # Calculate heading error
+            self.heading_error = self._normalize_angle(target_wp.heading - current_heading)
 
-        # Calculate distance reading deviation
-        self.distance_deviation = abs(current_distance_reading - target_wp.distance_reading)
+            # Calculate distance reading deviation
+            self.distance_deviation = abs(current_distance_reading - target_wp.distance_reading)
 
-        # Determine status
-        status = 'on_track'
-        if self.distance_to_waypoint < self.config.waypoint_distance_threshold:
-            status = 'reached'
-            self.current_waypoint_index += 1
-        elif self.distance_to_waypoint < self.config.waypoint_distance_threshold * 2:
-            status = 'approaching'
-        elif abs(self.heading_error) > self.config.heading_tolerance * 2:
-            status = 'off_course'
+            # Determine status
+            status = 'on_track'
+            if self.distance_to_waypoint < self.config.waypoint_distance_threshold:
+                status = 'reached'
+                self.current_waypoint_index += 1
+            elif self.distance_to_waypoint < self.config.waypoint_distance_threshold * 2:
+                status = 'approaching'
+            elif abs(self.heading_error) > self.config.heading_tolerance * 2:
+                status = 'off_course'
 
-        # Calculate progress
-        self.progress_percent = (self.current_waypoint_index / len(self.current_profile.waypoints)) * 100
+            # Calculate progress
+            self.progress_percent = (self.current_waypoint_index / len(self.current_profile.waypoints)) * 100
 
-        return {
-            'status': status,
-            'target_waypoint': target_wp.to_dict(),
-            'waypoint_index': self.current_waypoint_index,
-            'total_waypoints': len(self.current_profile.waypoints),
-            'distance_to_waypoint': round(self.distance_to_waypoint, 3),
-            'heading_error': round(self.heading_error, 1),
-            'heading_correction': 'left' if self.heading_error > 0 else 'right',
-            'distance_deviation': round(self.distance_deviation, 3),
-            'progress': round(self.progress_percent, 1),
-            'expected_distance': target_wp.distance_reading,
-            'current_distance': current_distance_reading
-        }
+            return {
+                'status': status,
+                'target_waypoint': target_wp.to_dict(),
+                'waypoint_index': self.current_waypoint_index,
+                'total_waypoints': len(self.current_profile.waypoints),
+                'distance_to_waypoint': round(self.distance_to_waypoint, 3),
+                'heading_error': round(self.heading_error, 1),
+                'heading_correction': 'left' if self.heading_error > 0 else 'right',
+                'distance_deviation': round(self.distance_deviation, 3),
+                'progress': round(self.progress_percent, 1),
+                'expected_distance': target_wp.distance_reading,
+                'current_distance': current_distance_reading
+            }
 
     def _normalize_angle(self, angle: float) -> float:
         """Normalize angle to -180 to 180 degrees"""
@@ -432,11 +439,12 @@ class ProfileNavigator:
 
     def get_status(self) -> dict:
         """Get navigation status"""
-        return {
-            'is_navigating': self.is_navigating,
-            'profile_name': self.current_profile.name if self.current_profile else None,
-            'current_waypoint': self.current_waypoint_index,
-            'total_waypoints': len(self.current_profile.waypoints) if self.current_profile else 0,
-            'progress': round(self.progress_percent, 1),
-            'distance_to_waypoint': round(self.distance_to_waypoint, 3)
-        }
+        with self.lock:
+            return {
+                'is_navigating': self.is_navigating,
+                'profile_name': self.current_profile.name if self.current_profile else None,
+                'current_waypoint': self.current_waypoint_index,
+                'total_waypoints': len(self.current_profile.waypoints) if self.current_profile else 0,
+                'progress': round(self.progress_percent, 1),
+                'distance_to_waypoint': round(self.distance_to_waypoint, 3)
+            }

@@ -126,6 +126,14 @@ def get_client_id() -> str:
     return request.remote_addr or 'unknown'
 
 
+def validate_token(token: Optional[str]) -> bool:
+    """Return True if the raw token is valid. Used outside request context
+    (e.g. WebSocket handshake)."""
+    if not token:
+        return False
+    return hash_token(token) in API_TOKENS
+
+
 def require_auth(f: Callable) -> Callable:
     """
     Decorator requiring API authentication

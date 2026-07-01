@@ -26,7 +26,7 @@ from app.object_detection import ObjectDetector
 from app.data_quality import DataQualityValidator
 from app.security import (
     require_auth, require_rate_limit, init_default_token,
-    is_public_route, validate_path_component
+    is_public_route, validate_path_component, validate_token
 )
 
 # Configure logging
@@ -336,7 +336,13 @@ app = Flask(__name__,
 # Restricted CORS - only allow same-origin and BlueOS hosts
 ALLOWED_ORIGINS = os.environ.get('CORS_ORIGINS', 'http://localhost:5000,http://127.0.0.1:5000,http://blueos.local').split(',')
 CORS(app, origins=ALLOWED_ORIGINS, supports_credentials=True)
-socketio = SocketIO(app, cors_allowed_origins=ALLOWED_ORIGINS)
+# async_mode='threading' makes socketio.emit() safe to call from the LiDAR
+# background thread (Concurrency finding #2).
+socketio = SocketIO(app, cors_allowed_origins=ALLOWED_ORIGINS, async_mode='threading')
+
+# When enabled, WebSocket clients must present a valid token on connect.
+# Off by default for local BlueOS use; enable on shared networks.
+REQUIRE_WS_AUTH = os.environ.get('REQUIRE_WS_AUTH', 'false').lower() == 'true'
 
 # Create application instance
 lidar_app = LiDARSLAMApplication()
@@ -728,7 +734,23 @@ def save_objects():
 # ============ WebSocket Events ============
 
 @socketio.on('connect')
-def on_connect():
+def on_connect(auth=None):
+    """Handle a new WebSocket client.
+
+    When REQUIRE_WS_AUTH is set, the client must supply a valid token via the
+    Socket.IO auth payload ({token: ...}) or an api_key query parameter.
+    Returning False rejects the connection.
+    """
+    if REQUIRE_WS_AUTH:
+        token = None
+        if isinstance(auth, dict):
+            token = auth.get('token') or auth.get('api_key')
+        if not token:
+            token = request.args.get('api_key')
+        if not validate_token(token):
+            logger.warning("WebSocket connection rejected: invalid token")
+            return False
+
     logger.info("WebSocket client connected")
     emit('status', lidar_app.get_status())
 
@@ -764,13 +786,19 @@ def main():
     if not lidar_app.initialize():
         logger.warning("LiDAR initialization failed - running in demo mode")
 
-    # Run Flask server with SocketIO
+    # Run Flask server with SocketIO.
+    # allow_unsafe_werkzeug is only permitted in DEBUG; production deployments
+    # should front this with a proper WSGI server (see DEPLOYMENT.md /
+    # docker-compose gunicorn command). Never ship with DEBUG=true.
+    if Config.DEBUG:
+        logger.warning("DEBUG mode is ON - do not use in production")
+
     socketio.run(
         app,
         host=Config.WEB_HOST,
         port=Config.WEB_PORT,
         debug=Config.DEBUG,
-        allow_unsafe_werkzeug=True
+        allow_unsafe_werkzeug=Config.DEBUG
     )
 
 

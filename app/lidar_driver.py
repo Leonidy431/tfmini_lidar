@@ -277,8 +277,9 @@ class TFminiSDriver:
                 self.readings_count += 1
                 self.readings_history.append(reading)
 
-                # Call all callbacks
-                for callback in self.callbacks:
+                # Call all callbacks. Iterate over a snapshot so callbacks
+                # added/removed from another thread don't corrupt iteration.
+                for callback in list(self.callbacks):
                     try:
                         callback(reading)
                     except Exception as e:

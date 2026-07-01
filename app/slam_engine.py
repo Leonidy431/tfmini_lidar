@@ -257,9 +257,8 @@ class SLAMEngine:
 
     def get_trajectory(self) -> np.ndarray:
         """Get trajectory as array of positions"""
-        positions = []
-        for pose in self.poses:
-            positions.append(pose[:3, 3])
+        with self.lock:
+            positions = [pose[:3, 3] for pose in self.poses]
         return np.array(positions) if positions else np.array([])
 
     def get_current_position(self) -> Tuple[float, float, float]:
