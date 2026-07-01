@@ -127,12 +127,13 @@ class DistancePatternAnalyzer:
         return {
             'status': 'analyzed',
             'pattern_type': pattern_type,
-            'mean_distance': round(mean_dist, 3),
-            'distance_variance': round(std_dist, 4),
-            'mean_strength': round(mean_strength, 1),
-            'edge_count': len(edges),
-            'is_flat': is_flat,
-            'is_oscillating': is_oscillating
+            'mean_distance': round(float(mean_dist), 3),
+            'distance_variance': round(float(std_dist), 4),
+            'mean_strength': round(float(mean_strength), 1),
+            'edge_count': int(len(edges)),
+            # Cast numpy bools to native bool for clean JSON serialization
+            'is_flat': bool(is_flat),
+            'is_oscillating': bool(is_oscillating)
         }
 
 
