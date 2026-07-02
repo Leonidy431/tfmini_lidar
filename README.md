@@ -5,6 +5,8 @@ underwater ROVs using a Benewake **TFmini-S** single-point LiDAR, packaged as a
 [BlueOS](https://blueos.cloud/) Docker extension.
 
 - **SLAM mapping** — ICP-based point cloud registration (Open3D)
+- **3D object scanner** — orbit the object (boat/drone/ROV) and build a
+  3D-scanner-style point cloud, ring by ring ([docs](docs/SCANNER_3D.md))
 - **Navigation profiles** — record a path, then replay it with live guidance
 - **Object detection** — pattern + clustering based obstacle classification
 - **Localization** — map-based position estimation
@@ -178,6 +180,7 @@ app/
   map_manager.py     Map persistence (PLY/PCD/NPY/H5)
   profile_recorder.py Waypoint recording + playback
   object_detection.py Pattern + clustering classification
+  scanner_3d.py      3D object scanner (orbit rings)
   data_quality.py    IQR/Z-score/rate outlier filtering
   security.py        Auth, rate limiting, path safety
   config.py          Dataclass configuration

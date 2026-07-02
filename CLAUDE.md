@@ -11,6 +11,7 @@ TFmini-S LiDAR integration for BlueOS underwater ROV navigation with SLAM mappin
 - `app/slam_engine.py` - ICP-based point cloud registration
 - `app/profile_recorder.py` - Navigation waypoint recording/playback
 - `app/object_detection.py` - Pattern-based obstacle classification
+- `app/scanner_3d.py` - 3D object scanner (orbit scan, ring layers, coverage)
 - `app/localization.py` - Map-based position estimation
 - `app/security.py` - Authentication, rate limiting, path traversal protection
 - `app/data_quality.py` - IQR/Z-score outlier filtering (Rule 4)

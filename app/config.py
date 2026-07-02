@@ -63,6 +63,19 @@ class ObjectDetectionConfig:
 
 
 @dataclass
+class ScannerConfig:
+    """3D Object Scanner (orbit scan) Configuration"""
+    orbit_radius: float = 3.0  # meters, default carrier-to-center distance
+    angular_resolution_deg: float = 5.0  # coverage bin size (72 bins per ring)
+    layer_height: float = 0.5  # meters between vertical scan rings
+    min_distance: float = 0.2  # meters, reject readings closer than this
+    max_points: int = 500000  # hard cap on accumulated cloud
+    signal_threshold: int = 100  # minimum signal strength to accept
+    min_coverage_complete: float = 0.95  # ring considered complete above this
+    progress_emit_every: int = 25  # WebSocket progress cadence (accepted points)
+
+
+@dataclass
 class LocalizationConfig:
     """Localization Configuration"""
     enable_icp_refinement: bool = True
@@ -108,6 +121,7 @@ class Config:
     navigation = NavigationConfig()
     object_detection = ObjectDetectionConfig()
     localization = LocalizationConfig()
+    scanner = ScannerConfig()
     blueos = BlueOSConfig()
 
     @classmethod
@@ -145,6 +159,11 @@ class Config:
             "object_detection": {
                 "enabled": cls.object_detection.enabled,
                 "classes": cls.object_detection.classes
+            },
+            "scanner": {
+                "orbit_radius": cls.scanner.orbit_radius,
+                "angular_resolution_deg": cls.scanner.angular_resolution_deg,
+                "layer_height": cls.scanner.layer_height
             }
         }
 

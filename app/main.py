@@ -24,6 +24,7 @@ from app.localization import LocalizationEngine
 from app.map_manager import MapManager
 from app.profile_recorder import ProfileRecorder, ProfileNavigator
 from app.object_detection import ObjectDetector
+from app.scanner_3d import Scanner3D
 from app.data_quality import DataQualityValidator
 from app.security import (
     require_auth, require_rate_limit, init_default_token,
@@ -60,6 +61,7 @@ class LiDARSLAMApplication:
     MODE_LOCALIZING = 'localizing'
     MODE_NAVIGATING = 'navigating'
     MODE_RECORDING = 'recording'
+    MODE_SCANNING = 'scanning'  # 3D object scan: carrier orbits the target
 
     def __init__(self):
         self.config = Config
@@ -72,6 +74,7 @@ class LiDARSLAMApplication:
         self.profile_recorder = ProfileRecorder(self.config.PROFILES_DIR)
         self.profile_navigator = ProfileNavigator(self.config.navigation)
         self.object_detector = ObjectDetector(self.config.object_detection)
+        self.scanner = Scanner3D(self.config.scanner)
 
         # Data quality validation (Rule 4: IQR + Z-score outlier filtering)
         self.data_quality = DataQualityValidator(
@@ -159,7 +162,8 @@ class LiDARSLAMApplication:
         return True
 
     # Modes where losing the sensor is a safety concern
-    ACTIVE_MODES = (MODE_MAPPING, MODE_LOCALIZING, MODE_NAVIGATING, MODE_RECORDING)
+    ACTIVE_MODES = (MODE_MAPPING, MODE_LOCALIZING, MODE_NAVIGATING,
+                    MODE_RECORDING, MODE_SCANNING)
 
     def _on_driver_error(self, context: str, exc: Exception):
         """Broadcast driver errors and enforce a safe state (Maritime #2).
@@ -259,7 +263,7 @@ class LiDARSLAMApplication:
     def set_mode(self, mode: str) -> bool:
         """Set operating mode"""
         valid_modes = [self.MODE_IDLE, self.MODE_MAPPING, self.MODE_LOCALIZING,
-                      self.MODE_NAVIGATING, self.MODE_RECORDING]
+                      self.MODE_NAVIGATING, self.MODE_RECORDING, self.MODE_SCANNING]
 
         if mode not in valid_modes:
             logger.error(f"Invalid mode: {mode}")
@@ -273,6 +277,10 @@ class LiDARSLAMApplication:
         if self.mode == self.MODE_NAVIGATING and mode != self.MODE_NAVIGATING:
             # Stop navigation
             self.profile_navigator.stop_navigation()
+
+        if self.mode == self.MODE_SCANNING and mode != self.MODE_SCANNING:
+            # Stop the 3D scan (data is kept until cleared/saved)
+            self.scanner.stop_scan()
 
         self.mode = mode
         logger.info(f"Mode changed to: {mode}")
@@ -362,6 +370,16 @@ class LiDARSLAMApplication:
                 current_distance_reading=reading.distance
             )
             self._broadcast_navigation(guidance)
+
+        elif self.mode == self.MODE_SCANNING:
+            result = self.scanner.add_reading(
+                distance=reading.distance,
+                heading_deg=self.current_heading,
+                signal_strength=reading.signal_strength
+            )
+            if (result and result.get('accepted') and self.websocket_callback
+                    and self.scanner.accepted % self.config.scanner.progress_emit_every == 0):
+                self.websocket_callback('scanner_progress', self.scanner.get_statistics())
 
         # Object detection (always active if enabled)
         if self.config.object_detection.enabled:
@@ -474,6 +492,7 @@ class LiDARSLAMApplication:
             'object_detection': detection_stats,
             'recording': recording_status,
             'navigation': navigation_status,
+            'scanner': self.scanner.get_statistics(),
             'data_quality': self.data_quality.get_statistics(),
             'health': self.get_health(),
             'pipeline': {
@@ -937,6 +956,123 @@ def save_objects():
     """Save detected objects"""
     success = lidar_app.object_detector.save_objects()
     return jsonify({'success': success})
+
+
+# ============ 3D Scanner API ============
+
+@app.route('/api/scanner/start', methods=['POST'])
+@require_auth
+@require_rate_limit
+def scanner_start():
+    """Start a 3D orbit scan.
+
+    Body: {center: [x,y,z]?, orbit_radius: float?, initial_z: float?}
+    The vehicle should orbit the object with the sensor aimed at its center.
+    """
+    data = request.get_json(silent=True) or {}
+
+    center = data.get('center', [0.0, 0.0, 0.0])
+    if (not isinstance(center, (list, tuple)) or len(center) != 3
+            or not all(isinstance(v, (int, float)) for v in center)):
+        return jsonify({'success': False, 'error': 'center must be [x, y, z]'}), 400
+
+    orbit_radius = data.get('orbit_radius')
+    if orbit_radius is not None:
+        try:
+            orbit_radius = float(orbit_radius)
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': 'Invalid orbit_radius'}), 400
+        if not (0.2 < orbit_radius <= 12.0):
+            return jsonify({'success': False,
+                            'error': 'orbit_radius must be within (0.2, 12.0] m'}), 400
+
+    try:
+        initial_z = float(data.get('initial_z', 0.0))
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': 'Invalid initial_z'}), 400
+
+    if not lidar_app.scanner.start_scan(center=tuple(center),
+                                        orbit_radius=orbit_radius,
+                                        initial_z=initial_z):
+        return jsonify({'success': False, 'error': 'Failed to start scan'}), 400
+
+    lidar_app.set_mode(LiDARSLAMApplication.MODE_SCANNING)
+    return jsonify({'success': True, 'scanner': lidar_app.scanner.get_statistics()})
+
+
+@app.route('/api/scanner/stop', methods=['POST'])
+@require_auth
+@require_rate_limit
+def scanner_stop():
+    """Stop the scan (point cloud is kept until cleared or saved)."""
+    lidar_app.set_mode(LiDARSLAMApplication.MODE_IDLE)
+    return jsonify({'success': True, 'scanner': lidar_app.scanner.get_statistics()})
+
+
+@app.route('/api/scanner/layer', methods=['POST'])
+@require_auth
+@require_rate_limit
+def scanner_set_layer():
+    """Set the current scan layer depth/altitude. Body: {z: float}"""
+    data = request.get_json(silent=True) or {}
+    try:
+        z = float(data['z'])
+    except (KeyError, TypeError, ValueError):
+        return jsonify({'success': False, 'error': 'z (float) is required'}), 400
+
+    lidar_app.scanner.set_layer(z)
+    return jsonify({'success': True, 'current_z': z})
+
+
+@app.route('/api/scanner/status')
+@require_rate_limit
+def scanner_status():
+    """Scan progress: per-layer coverage, point count, rejection stats."""
+    return jsonify(lidar_app.scanner.get_statistics())
+
+
+@app.route('/api/scanner/points')
+@require_rate_limit
+def scanner_points():
+    """Current scan point cloud (strided to at most 50k points for the web)."""
+    points = lidar_app.scanner.get_points(max_points=50000)
+    return jsonify({'points': points, 'count': len(points)})
+
+
+@app.route('/api/scanner/clear', methods=['POST'])
+@require_auth
+@require_rate_limit
+def scanner_clear():
+    """Discard the current scan data."""
+    lidar_app.scanner.clear()
+    return jsonify({'success': True})
+
+
+@app.route('/api/scanner/save/<name>', methods=['POST'])
+@require_auth
+@require_rate_limit
+def scanner_save(name: str):
+    """Save the scan point cloud as a named map (PLY by default)."""
+    if not validate_path_component(name):
+        return jsonify({'success': False, 'error': 'Invalid scan name'}), 400
+
+    points = lidar_app.scanner.get_points()
+    if not points:
+        return jsonify({'success': False, 'error': 'No scan data'}), 400
+
+    data = request.get_json(silent=True) or {}
+    description = data.get('description', '3D object scan')
+    stats = lidar_app.scanner.get_statistics()
+
+    success = lidar_app.map_manager.save_map(
+        name=name,
+        points=np.array(points, dtype=float),
+        description=description,
+        tags=['3d_scan'] + list(data.get('tags', [])),
+        total_scans=stats.get('layer_count', 0)
+    )
+    return jsonify({'success': success,
+                    'point_count': len(points)}), 200 if success else 500
 
 
 # ============ WebSocket Events ============
