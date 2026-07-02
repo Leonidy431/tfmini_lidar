@@ -355,36 +355,44 @@ class ObjectDetector:
 
     def _simple_cluster(self, points: np.ndarray, eps: float,
                         min_samples: int) -> List[np.ndarray]:
-        """Simple distance-based clustering"""
+        """DBSCAN-style clustering accelerated with a KD-tree.
+
+        Uses scipy.spatial.cKDTree for O(n log n) neighborhood queries instead
+        of the previous O(n^2) pairwise-distance scan (Performance #7).
+        """
+        n = len(points)
+        if n == 0:
+            return []
+
+        from scipy.spatial import cKDTree
+        tree = cKDTree(points)
+
         clusters = []
         visited = set()
 
-        for i in range(len(points)):
+        for i in range(n):
             if i in visited:
                 continue
 
-            # Find neighbors
-            distances = np.linalg.norm(points - points[i], axis=1)
-            neighbors = np.where(distances < eps)[0]
+            # Neighborhood query via KD-tree
+            neighbors = tree.query_ball_point(points[i], eps)
 
             if len(neighbors) >= min_samples:
-                cluster = []
+                cluster_idx = []
                 stack = list(neighbors)
 
                 while stack:
                     j = stack.pop()
                     if j not in visited:
                         visited.add(j)
-                        cluster.append(points[j])
+                        cluster_idx.append(j)
 
-                        # Expand cluster
-                        distances_j = np.linalg.norm(points - points[j], axis=1)
-                        new_neighbors = np.where(distances_j < eps)[0]
+                        new_neighbors = tree.query_ball_point(points[j], eps)
                         if len(new_neighbors) >= min_samples:
-                            stack.extend([n for n in new_neighbors if n not in visited])
+                            stack.extend(k for k in new_neighbors if k not in visited)
 
-                if cluster:
-                    clusters.append(np.array(cluster))
+                if cluster_idx:
+                    clusters.append(points[cluster_idx])
 
         return clusters
 

@@ -11,6 +11,7 @@ A profile consists of:
 
 import json
 import os
+import time
 import numpy as np
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime
@@ -236,8 +237,15 @@ class ProfileRecorder:
             logger.debug(f"Added waypoint {self.waypoint_counter}: {position}")
             return True
 
-    def save_profile(self, profile: NavigationProfile = None) -> bool:
-        """Save profile to disk"""
+    def save_profile(self, profile: NavigationProfile = None,
+                     max_retries: int = 3) -> bool:
+        """Save profile to disk.
+
+        Transient I/O failures (e.g. temporary disk pressure) are retried with a
+        short backoff before giving up (Error Handling #7). The write is atomic:
+        data is written to a temp file then renamed so a crash mid-write cannot
+        corrupt an existing profile.
+        """
         profile = profile or self.current_profile
         if not profile:
             logger.error("No profile to save")
@@ -247,21 +255,34 @@ class ProfileRecorder:
             logger.error(f"Invalid profile name: {profile.name}")
             return False
 
-        try:
-            filepath = safe_join(self.profiles_dir, f"{profile.name}.json")
-            if filepath is None:
-                logger.error(f"Path traversal blocked for profile: {profile.name}")
+        filepath = safe_join(self.profiles_dir, f"{profile.name}.json")
+        if filepath is None:
+            logger.error(f"Path traversal blocked for profile: {profile.name}")
+            return False
+
+        payload = json.dumps(profile.to_dict(), indent=2)
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                tmp_path = f"{filepath}.tmp"
+                with open(tmp_path, 'w') as f:
+                    f.write(payload)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_path, filepath)
+                logger.info(f"Profile saved: {filepath}")
+                return True
+
+            except OSError as e:
+                logger.warning(f"Profile save attempt {attempt}/{max_retries} failed: {e}")
+                if attempt < max_retries:
+                    time.sleep(0.1 * attempt)  # linear backoff
+            except Exception as e:
+                logger.error(f"Failed to save profile: {e}")
                 return False
 
-            with open(filepath, 'w') as f:
-                json.dump(profile.to_dict(), f, indent=2)
-
-            logger.info(f"Profile saved: {filepath}")
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to save profile: {e}")
-            return False
+        logger.error(f"Failed to save profile after {max_retries} attempts")
+        return False
 
     def load_profile(self, name: str) -> Optional[NavigationProfile]:
         """Load profile from disk"""
