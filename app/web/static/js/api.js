@@ -169,6 +169,39 @@ async function deleteProfile(name) {
     return await apiCall(`/profiles/${encodeURIComponent(name)}/delete`, 'DELETE');
 }
 
+// ========== 3D Scanner API ==========
+
+async function startScan(centerX, centerY, centerZ, orbitRadius) {
+    return await apiCall('/scanner/start', 'POST', {
+        center: [centerX, centerY, centerZ],
+        orbit_radius: orbitRadius
+    });
+}
+
+async function stopScan() {
+    return await apiCall('/scanner/stop', 'POST');
+}
+
+async function setScanLayer(z) {
+    return await apiCall('/scanner/layer', 'POST', { z });
+}
+
+async function getScanStatus() {
+    return await apiCall('/scanner/status');
+}
+
+async function getScanPoints() {
+    return await apiCall('/scanner/points');
+}
+
+async function clearScan() {
+    return await apiCall('/scanner/clear', 'POST');
+}
+
+async function saveScan(name, description = '') {
+    return await apiCall(`/scanner/save/${encodeURIComponent(name)}`, 'POST', { description });
+}
+
 // ========== Object Detection API ==========
 
 async function getObjects() {

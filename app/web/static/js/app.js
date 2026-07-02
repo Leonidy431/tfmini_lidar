@@ -6,9 +6,12 @@
 let socket = null;
 let mappingVisualizer = null;
 let localizationVisualizer = null;
+let scannerVisualizer = null;
 let statusUpdateInterval = null;
 let isRecording = false;
 let isNavigating = false;
+let isScanning = false;
+let scanLayerHeight = 0.5; // synced from server config on first status update
 
 // Initialize on DOM ready
 document.addEventListener('DOMContentLoaded', () => {
@@ -33,6 +36,9 @@ function initializeApp() {
 
     // Initialize 2D visualizer for localization
     localizationVisualizer = new LocalizationVisualizer('localizationCanvas');
+
+    // Initialize 3D visualizer for the object scanner
+    scannerVisualizer = new PointCloudVisualizer('scannerCanvas');
 
     // Load initial data
     loadMaps();
@@ -238,6 +244,106 @@ function setupEventListeners() {
     document.getElementById('refreshObjectsBtn')?.addEventListener('click', () => {
         loadObjects();
     });
+
+    // ===== 3D Scanner controls =====
+
+    document.getElementById('startScanBtn')?.addEventListener('click', async (e) => {
+        const cx = parseFloat(document.getElementById('scanCenterX').value) || 0;
+        const cy = parseFloat(document.getElementById('scanCenterY').value) || 0;
+        const cz = parseFloat(document.getElementById('scanCenterZ').value) || 0;
+        const radius = parseFloat(document.getElementById('scanOrbitRadius').value);
+
+        if (!radius || radius <= 0) {
+            showToast('Enter a valid orbit radius', 'error');
+            return;
+        }
+
+        const result = await withLoading(e.currentTarget, () => startScan(cx, cy, cz, radius));
+        if (result.success) {
+            isScanning = true;
+            document.getElementById('startScanBtn').disabled = true;
+            document.getElementById('stopScanBtn').disabled = false;
+            addLog(`3D scan started (orbit radius ${radius}m)`);
+            showToast('Scan started - orbit the object', 'success');
+        } else {
+            showToast('Failed to start scan: ' + (result.error || 'Unknown error'), 'error');
+        }
+    });
+
+    document.getElementById('stopScanBtn')?.addEventListener('click', async (e) => {
+        const result = await withLoading(e.currentTarget, stopScan);
+        if (result.success) {
+            isScanning = false;
+            document.getElementById('startScanBtn').disabled = false;
+            document.getElementById('stopScanBtn').disabled = true;
+            addLog('3D scan stopped');
+            loadScanPoints();
+        }
+    });
+
+    document.getElementById('clearScanBtn')?.addEventListener('click', async () => {
+        if (!confirm('Discard the current scan data?')) return;
+        const result = await clearScan();
+        if (result.success) {
+            scannerVisualizer?.clear();
+            updateScannerDisplay(null);
+            addLog('Scan data cleared');
+        }
+    });
+
+    document.getElementById('scanLayerUpBtn')?.addEventListener('click', async () => {
+        const current = parseFloat(document.getElementById('scanCurrentZ').textContent) || 0;
+        const result = await setScanLayer(current + scanLayerHeight);
+        if (result.success) addLog(`Layer set to ${result.current_z.toFixed(2)}m`);
+    });
+
+    document.getElementById('scanLayerDownBtn')?.addEventListener('click', async () => {
+        const current = parseFloat(document.getElementById('scanCurrentZ').textContent) || 0;
+        const result = await setScanLayer(current - scanLayerHeight);
+        if (result.success) addLog(`Layer set to ${result.current_z.toFixed(2)}m`);
+    });
+
+    document.getElementById('scanLayerSetBtn')?.addEventListener('click', async () => {
+        const z = parseFloat(document.getElementById('scanLayerInput').value);
+        if (Number.isNaN(z)) {
+            showToast('Enter a valid depth value', 'error');
+            return;
+        }
+        const result = await setScanLayer(z);
+        if (result.success) {
+            addLog(`Layer set to ${z.toFixed(2)}m`);
+            document.getElementById('scanLayerInput').value = '';
+        }
+    });
+
+    document.getElementById('scanResetCameraBtn')?.addEventListener('click', () => {
+        scannerVisualizer?.resetCamera();
+    });
+
+    document.getElementById('scanRefreshPointsBtn')?.addEventListener('click', () => {
+        loadScanPoints();
+    });
+
+    document.getElementById('saveScanBtn')?.addEventListener('click', async () => {
+        const name = document.getElementById('scanNameInput').value.trim();
+        const desc = document.getElementById('scanDescInput').value.trim();
+
+        if (!name) {
+            alert('Please enter a scan name');
+            return;
+        }
+
+        const result = await saveScan(name, desc);
+        if (result.success) {
+            addLog(`Scan "${name}" saved as map (${result.point_count} points)`);
+            showToast(`Scan saved: ${result.point_count} points`, 'success');
+            document.getElementById('scanNameInput').value = '';
+            document.getElementById('scanDescInput').value = '';
+            loadMaps();
+        } else {
+            showToast('Failed to save scan: ' + (result.error || 'Unknown error'), 'error');
+        }
+    });
 }
 
 /**
@@ -305,6 +411,15 @@ function setupWebSocket() {
             if (data.points && mappingVisualizer) {
                 mappingVisualizer.updatePointCloud(data.points);
             }
+        });
+
+        socket.on('scanner_progress', (data) => {
+            updateScannerDisplay(data);
+        });
+
+        socket.on('safety_alarm', (data) => {
+            showToast(data.message || 'Safety alarm', 'error', 8000);
+            addLog(`SAFETY ALARM: ${data.message}`);
         });
 
     } catch (error) {
@@ -405,6 +520,85 @@ function updateStatusDisplay(status) {
         document.getElementById('wallCount').textContent = classes.wall || 0;
         document.getElementById('unknownCount').textContent = classes.unknown || 0;
     }
+
+    // 3D scanner
+    if (status.scanner) {
+        updateScannerDisplay(status.scanner);
+    }
+    if (status.config?.scanner?.layer_height) {
+        scanLayerHeight = status.config.scanner.layer_height;
+    }
+}
+
+/**
+ * Update the 3D scanner tab from a scanner status object
+ * ({is_scanning, current_z, point_count, layer_count, overall_coverage,
+ *   layers: {z: {coverage, complete}}, rejected, duration_seconds, ...}).
+ */
+function updateScannerDisplay(scanner) {
+    if (!scanner) {
+        document.getElementById('scanRingCoveragePct').textContent = '0%';
+        document.getElementById('scanRingCoverageBar').style.width = '0%';
+        document.getElementById('scanOverallCoveragePct').textContent = '0%';
+        document.getElementById('scanOverallCoverageBar').style.width = '0%';
+        document.getElementById('scanPointCount').textContent = '0';
+        document.getElementById('scanLayerCount').textContent = '0';
+        document.getElementById('scanRejectedCount').textContent = '0';
+        document.getElementById('scanDuration').textContent = '0 s';
+        document.getElementById('scanLayersList').innerHTML = '';
+        return;
+    }
+
+    isScanning = !!scanner.is_scanning;
+    document.getElementById('startScanBtn').disabled = isScanning;
+    document.getElementById('stopScanBtn').disabled = !isScanning;
+
+    document.getElementById('scanCurrentZ').textContent = (scanner.current_z || 0).toFixed(2);
+    document.getElementById('scanPointCount').textContent = scanner.point_count || 0;
+    document.getElementById('scanLayerCount').textContent = scanner.layer_count || 0;
+    document.getElementById('scanRejectedCount').textContent = scanner.rejected || 0;
+    document.getElementById('scanDuration').textContent = `${Math.floor(scanner.duration_seconds || 0)} s`;
+
+    const overallPct = Math.round((scanner.overall_coverage || 0) * 100);
+    document.getElementById('scanOverallCoveragePct').textContent = `${overallPct}%`;
+    document.getElementById('scanOverallCoverageBar').style.width = `${overallPct}%`;
+
+    // Ring coverage for the current layer
+    const layers = scanner.layers || {};
+    const currentKey = Object.keys(layers).find(k => Math.abs(parseFloat(k) - (scanner.current_z || 0)) < 1e-6);
+    const currentCoverage = currentKey ? layers[currentKey].coverage : 0;
+    const ringPct = Math.round(currentCoverage * 100);
+    document.getElementById('scanRingCoveragePct').textContent = `${ringPct}%`;
+    document.getElementById('scanRingCoverageBar').style.width = `${ringPct}%`;
+
+    // Per-layer breakdown
+    const layersList = document.getElementById('scanLayersList');
+    const layerKeys = Object.keys(layers).sort((a, b) => parseFloat(b) - parseFloat(a));
+    if (layerKeys.length === 0) {
+        layersList.innerHTML = '';
+    } else {
+        layersList.innerHTML = layerKeys.map(z => {
+            const l = layers[z];
+            const pct = Math.round(l.coverage * 100);
+            return `
+                <div class="layer-row ${l.complete ? 'layer-complete' : ''}">
+                    <span class="layer-z">${escapeHtml(z)}m</span>
+                    <span class="layer-bar-track"><span class="layer-bar-fill" style="width:${pct}%;"></span></span>
+                    <span class="layer-pct">${pct}%</span>
+                </div>
+            `;
+        }).join('');
+    }
+}
+
+/**
+ * Fetch and render the current scan point cloud.
+ */
+async function loadScanPoints() {
+    const data = await getScanPoints();
+    if (data && data.points && scannerVisualizer) {
+        scannerVisualizer.updatePointCloud(data.points, 0xf5a623);
+    }
 }
 
 /**
@@ -481,6 +675,8 @@ function switchTab(tabId) {
     // Refresh visualizations when switching tabs
     if (tabId === 'mapping') {
         updateMappingVisualization();
+    } else if (tabId === 'scanner') {
+        loadScanPoints();
     }
 }
 
@@ -745,4 +941,5 @@ window.addEventListener('beforeunload', () => {
     // Release Three.js / canvas resources to avoid WebGL context leaks
     mappingVisualizer?.destroy?.();
     localizationVisualizer?.destroy?.();
+    scannerVisualizer?.destroy?.();
 });
