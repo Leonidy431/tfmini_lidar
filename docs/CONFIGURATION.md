@@ -24,9 +24,10 @@ with environment-variable overrides for deployment-specific values.
 | `baudrate` | `115200` | baud | TFmini-S default. |
 | `timeout` | `1.0` | s | Serial read timeout. |
 | `frequency` | `100` | Hz | Output rate, 1–1000. |
-| `max_range` | `12.0` | m | Readings above are rejected. |
-| `min_range` | `0.1` | m | Readings below are rejected. |
-| `signal_threshold` | `100` | — | Minimum signal strength to accept a frame. |
+| `max_range` | `4.0` | m | Readings above are rejected. Overridden by `LIDAR_MAX_RANGE_M`. 12.0 m is the TFmini-S in-air spec; underwater at 850nm no real return exists past a few meters (see [`PHYSICS_AUDIT.md`](../PHYSICS_AUDIT.md) C2) — this default is a moderate-water-clarity compromise, tune to your site. |
+| `min_range` | `0.1` | m | Readings below are rejected (sensor blind zone). |
+| `signal_threshold` | `100` | — | Minimum signal strength to accept a frame (also the TFmini-S datasheet floor). |
+| `medium_refractive_index` | `1.333` | — | ToF range assumes propagation at `c/n`; underwater at 850nm `n≈1.333` (fresh) / `1.339` (sea). Uncorrected, ranges read ~33% long. Set to `1.0` for bench/air testing via `LIDAR_MEDIUM_INDEX`. See `PHYSICS_AUDIT.md` C1. |
 
 **Tuning:** In turbid water, raise `signal_threshold` (e.g. 150–200) to reject
 weak, scattered returns. Lower `frequency` if the pipeline reports dropped

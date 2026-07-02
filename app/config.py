@@ -14,9 +14,21 @@ class LiDARConfig:
     baudrate: int = 115200
     timeout: float = 1.0
     frequency: int = 100  # Hz (1-1000)
-    max_range: float = 12.0  # meters
+    # 12.0 m is the TFmini-S IN-AIR spec. Underwater at 850nm, two-way Beer-
+    # Lambert absorption (alpha ~= 4.3 /m in clear water) makes any return
+    # past a few meters physically impossible -- readings beyond this are
+    # guaranteed backscatter/multipath artifacts, not real targets (Physics
+    # Audit C2). 4.0 m is a conservative compromise for moderate-clarity
+    # water; tune down for turbid water, up only for bench/air testing.
+    # Override via LIDAR_MAX_RANGE_M.
+    max_range: float = float(os.getenv("LIDAR_MAX_RANGE_M", "4.0"))
     min_range: float = 0.1  # meters
     signal_threshold: int = 100  # Minimum signal strength
+    # ToF range assumes propagation at c/n. n_air ~= 1.0003 (no-op); at
+    # 850nm n_water ~= 1.333 (fresh) / 1.339 (sea). Uncorrected, underwater
+    # ranges read ~33% long (Physics Audit C1). Set to 1.0 for bench/air
+    # testing via LIDAR_MEDIUM_INDEX.
+    medium_refractive_index: float = float(os.getenv("LIDAR_MEDIUM_INDEX", "1.333"))
 
 
 @dataclass
@@ -145,7 +157,8 @@ class Config:
                 "baudrate": cls.lidar.baudrate,
                 "frequency": cls.lidar.frequency,
                 "max_range": cls.lidar.max_range,
-                "min_range": cls.lidar.min_range
+                "min_range": cls.lidar.min_range,
+                "medium_refractive_index": cls.lidar.medium_refractive_index
             },
             "slam": {
                 "voxel_size": cls.slam.voxel_size,

@@ -90,7 +90,15 @@ class LiDARSLAMApplication:
         # State (protected by _state_lock)
         self._mode = self.MODE_IDLE
         self._is_running = False
-        self.current_heading = 0.0  # Will be updated from MAVLink if available
+        # Compass heading in degrees, clockwise-positive from North (NED/
+        # MAVLink convention). No attitude source is wired up in this build
+        # (Physics Audit C3/D1) -- the value stays at the placeholder 0.0.
+        # heading_ever_set tracks whether anything has ever updated it, so
+        # health reporting can surface "no heading source" honestly instead
+        # of silently mapping every reading onto a single world axis.
+        self.current_heading = 0.0
+        self.heading_ever_set = False
+        self.heading_last_update = 0.0
 
         # Real-time data (protected by _reading_lock)
         self.last_reading: Optional[LiDARReading] = None
@@ -143,7 +151,8 @@ class LiDARSLAMApplication:
             timeout=self.config.lidar.timeout,
             min_signal=self.config.lidar.signal_threshold,
             min_range_m=self.config.lidar.min_range,
-            max_range_m=self.config.lidar.max_range
+            max_range_m=self.config.lidar.max_range,
+            medium_refractive_index=self.config.lidar.medium_refractive_index
         )
 
         if not self.driver.connect():
@@ -298,10 +307,17 @@ class LiDARSLAMApplication:
         # Rule 4: reject statistical outliers before any downstream processing.
         # Turbidity/multipath in the underwater environment produces spurious
         # spikes that would otherwise corrupt the SLAM map.
+        # Use the monotonic capture timestamp for the rate-of-change gate
+        # (Physics Audit H9): wall-clock datetime.now() is subject to NTP
+        # steps on an RTC-less companion computer, which can silently
+        # disable or falsely trigger the gate. Fall back to wall-clock only
+        # if a reading somehow arrives without mono_timestamp set.
+        rate_ts = reading.mono_timestamp if reading.mono_timestamp is not None \
+            else reading.timestamp.timestamp()
         quality = self.data_quality.validate(
             distance=reading.distance,
             signal_strength=reading.signal_strength,
-            timestamp=reading.timestamp.timestamp()
+            timestamp=rate_ts
         )
         if not quality.accepted:
             logger.debug(f"Reading rejected ({quality.reason}): {reading.distance}m")
@@ -311,10 +327,15 @@ class LiDARSLAMApplication:
             self.last_reading = reading
             self._reading_count += 1
 
-            # Calculate readings per second
+            # Calculate readings per second: divide by the ACTUAL elapsed
+            # window, not a raw count (Physics Audit H5). The window is
+            # ">= 1.0s" by an unbounded amount when readings are sparse or
+            # after a dropout, so treating the count as if the window were
+            # exactly 1.000s biases the reported rate.
             now = time.time()
-            if now - self._last_rate_check >= 1.0:
-                self.readings_per_second = self._reading_count
+            elapsed = now - self._last_rate_check
+            if elapsed >= 1.0:
+                self.readings_per_second = round(self._reading_count / elapsed, 1)
                 self._reading_count = 0
                 self._last_rate_check = now
 
@@ -332,19 +353,26 @@ class LiDARSLAMApplication:
 
     def _process_reading(self, reading: LiDARReading):
         """Heavy processing pipeline, runs on the worker thread."""
-        # Convert distance to 3D point (assuming forward-facing sensor)
-        # In real application, this would use IMU data for proper transformation
-        x = reading.distance
-        y = 0.0
-        z = 0.0
+        # Convert distance to 3D point (assuming forward-facing sensor).
+        # Full attitude (pitch/roll) is not fused -- see PHYSICS_AUDIT.md D2;
+        # this remains a yaw-only projection until a real attitude source
+        # (MAVLink ATTITUDE) is wired in (D1).
+        d = reading.distance
 
         # Get current position estimate
         position = self._get_current_position()
 
-        # Transform point to world frame (simplified)
-        world_x = position[0] + x * np.cos(np.radians(self.current_heading))
-        world_y = position[1] + x * np.sin(np.radians(self.current_heading))
-        world_z = position[2] + z
+        # World frame is ENU (x=East, y=North, z=Up). current_heading is a
+        # COMPASS heading in degrees, clockwise-positive from North -- the
+        # opposite handedness of the math convention (CCW-positive from
+        # +X). Using cos()->x / sin()->y directly (as before) silently
+        # mirrors the reconstructed geometry about the NE diagonal (Physics
+        # Audit C4). Converting explicitly here keeps the single point of
+        # truth for the heading convention in one place.
+        heading_rad = np.radians(self.current_heading)
+        world_x = position[0] + d * np.sin(heading_rad)
+        world_y = position[1] + d * np.cos(heading_rad)
+        world_z = position[2]
 
         # Process based on mode
         if self.mode == self.MODE_MAPPING:
@@ -446,13 +474,24 @@ class LiDARSLAMApplication:
             if last.temperature < -15.0 or last.temperature > 55.0:
                 temp_out_of_range = True
 
+        # No attitude/heading source is wired up in this build (Physics
+        # Audit C3/D1): current_heading stays at its 0.0 placeholder. In
+        # modes that project readings into world coordinates, that silently
+        # collapses every beam onto a single axis. Surface this honestly
+        # instead of hiding it.
+        heading_dependent_mode = self.mode in (
+            self.MODE_MAPPING, self.MODE_RECORDING,
+            self.MODE_NAVIGATING, self.MODE_SCANNING
+        )
+        heading_missing = heading_dependent_mode and not self.heading_ever_set
+
         reasons = []
         state = 'healthy'
 
         if self.is_running and not connected:
             state = 'failed'
             reasons.append('sensor_disconnected')
-        elif reconnecting or error_rate > 0.1 or dq < 0.7 or temp_out_of_range:
+        elif reconnecting or error_rate > 0.1 or dq < 0.7 or temp_out_of_range or heading_missing:
             state = 'degraded'
             if reconnecting:
                 reasons.append('reconnecting')
@@ -462,6 +501,8 @@ class LiDARSLAMApplication:
                 reasons.append('low_data_quality')
             if temp_out_of_range:
                 reasons.append('temperature_out_of_range')
+            if heading_missing:
+                reasons.append('no_heading_source')
 
         return {
             'state': state,
@@ -469,8 +510,20 @@ class LiDARSLAMApplication:
             'sensor_connected': connected,
             'error_rate': round(error_rate, 4),
             'data_quality_score': dq,
+            'heading_source_active': self.heading_ever_set,
             'last_error': lidar_stats.get('last_error') if self.driver else None
         }
+
+    def set_heading(self, heading_deg: float):
+        """Update the compass heading (degrees, clockwise-positive from
+        North). Extension point for a future attitude source (MAVLink
+        ATTITUDE/VFR_HUD, see PHYSICS_AUDIT.md D1) -- not called anywhere
+        in this build, so heading_ever_set stays honestly False until one
+        is wired in."""
+        with self._state_lock:
+            self.current_heading = heading_deg % 360.0
+            self.heading_ever_set = True
+            self.heading_last_update = time.time()
 
     def get_status(self) -> Dict:
         """Get comprehensive application status"""

@@ -56,18 +56,30 @@ class TestObjectClassification:
         pattern = {
             'pattern_type': 'flat_surface',
             'mean_strength': 300,
-            'distance_variance': 0.01,
+            'distance_std': 0.01,
         }
         obj_class, confidence = detector._classify_object(pattern, distance=2.0)
         assert obj_class == 'wall'
         assert confidence > 0.3
+
+    def test_confidence_clamped_for_large_spread(self, tmp_path):
+        """A multi-meter distance_std (routine for an edge) must not drive
+        confidence negative (Physics Audit H8)."""
+        detector = ObjectDetector(objects_dir=str(tmp_path))
+        pattern = {
+            'pattern_type': 'edge_detected',
+            'mean_strength': 300,
+            'distance_std': 3.0,  # meters -- large spread across an edge
+        }
+        _, confidence = detector._classify_object(pattern, distance=2.0)
+        assert 0.0 <= confidence <= 1.0
 
     def test_unknown_when_no_rule_matches(self, tmp_path):
         detector = ObjectDetector(objects_dir=str(tmp_path))
         pattern = {
             'pattern_type': 'flat_surface',
             'mean_strength': 5,  # below wall's strength range
-            'distance_variance': 0.01,
+            'distance_std': 0.01,
         }
         obj_class, _ = detector._classify_object(pattern, distance=2.0)
         assert obj_class == 'unknown'
@@ -131,6 +143,28 @@ class TestProfileNavigator:
         assert nav._normalize_angle(270) == -90
         assert nav._normalize_angle(-270) == 90
         assert nav._normalize_angle(45) == 45
+
+    def test_heading_correction_right_for_positive_error(self):
+        """Compass convention: target clockwise of current -> turn right.
+
+        wp0 heading=0 (North), vehicle heading=340 (i.e. 20 deg counter-
+        clockwise of North) -> normalized error = 0 - 340 -> +20 (target is
+        20 deg clockwise of current) -> correction must be 'right'
+        (Physics Audit H2 - this was previously inverted to 'left').
+        """
+        nav = ProfileNavigator()
+        nav.start_navigation(_make_profile())
+        result = nav.update((5.0, 5.0, 0.0), 340.0, 1.0)
+        assert result['heading_error'] > 0
+        assert result['heading_correction'] == 'right'
+
+    def test_heading_correction_left_for_negative_error(self):
+        """wp0 heading=0, vehicle heading=20 -> error = 0-20 = -20 -> left."""
+        nav = ProfileNavigator()
+        nav.start_navigation(_make_profile())
+        result = nav.update((5.0, 5.0, 0.0), 20.0, 1.0)
+        assert result['heading_error'] < 0
+        assert result['heading_correction'] == 'left'
 
 
 # ---------------- Waypoint Quality Gating ----------------

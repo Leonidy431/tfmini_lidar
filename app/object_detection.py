@@ -128,7 +128,11 @@ class DistancePatternAnalyzer:
             'status': 'analyzed',
             'pattern_type': pattern_type,
             'mean_distance': round(float(mean_dist), 3),
-            'distance_variance': round(float(std_dist), 4),
+            # This is a standard deviation in METERS, not a variance
+            # (Physics Audit H8) -- renamed from the misleading
+            # 'distance_variance' so a meters-valued statistic is never
+            # mistaken for a dimensionless fraction downstream.
+            'distance_std': round(float(std_dist), 4),
             'mean_strength': round(float(mean_strength), 1),
             'edge_count': int(len(edges)),
             # Cast numpy bools to native bool for clean JSON serialization
@@ -271,6 +275,10 @@ class ObjectDetector:
         self._add_or_update_object(detection)
         return detection
 
+    # Reference length scale (meters) for turning distance_std into a
+    # dimensionless confidence contribution (Physics Audit H8).
+    CONFIDENCE_SIGMA_REF_M = 0.5
+
     def _classify_object(self, pattern: Dict, distance: float) -> Tuple[str, float]:
         """Classify object based on pattern and rules"""
         pattern_type = pattern.get('pattern_type', 'unknown')
@@ -283,12 +291,23 @@ class ObjectDetector:
             if rules['pattern'] == pattern_type:
                 # Check strength range
                 if rules['strength_range'][0] <= strength <= rules['strength_range'][1]:
-                    confidence = 0.6 + (0.4 * (1 - pattern.get('distance_variance', 0.5)))
+                    # distance_std is a length (meters); normalize by a
+                    # reference scale and clamp before treating it as a
+                    # dimensionless confidence contribution. The previous
+                    # formula subtracted a raw meters value from 1.0 and
+                    # only clamped the upper bound, so a few meters of
+                    # spread (routine for an 'edge_detected' pattern)
+                    # produced a NEGATIVE confidence -- inverting the score
+                    # for exactly the high-contrast edges this detector
+                    # exists to flag.
+                    sigma = pattern.get('distance_std', 0.5)
+                    spread_term = max(0.0, 1.0 - sigma / self.CONFIDENCE_SIGMA_REF_M)
+                    confidence = 0.6 + 0.4 * spread_term
                     if confidence > best_confidence:
                         best_confidence = confidence
                         best_class = obj_class
 
-        return best_class, min(best_confidence, 1.0)
+        return best_class, min(max(best_confidence, 0.0), 1.0)
 
     def _add_or_update_object(self, detection: DetectedObject):
         """Add new object or update existing if nearby"""

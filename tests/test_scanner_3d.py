@@ -27,26 +27,28 @@ class TestGeometry:
     """S = C + (d - R) * u(heading), at the current layer z."""
 
     def test_point_on_heading_zero(self):
+        """Compass heading 0 (North) -> u = (sin 0, cos 0) = (0, 1)."""
         s = make_scanner(orbit_radius=5.0)
         s.start_scan(center=(10.0, 0.0, 0.0), orbit_radius=5.0)
 
-        # heading 0 -> u = (1, 0); d=3, R=5 -> S = C + (3-5)*(1,0) = (8, 0)
+        # d=3, R=5 -> S = C + (3-5)*(0,1) = (10, -2)
         result = s.add_reading(distance=3.0, heading_deg=0.0, signal_strength=200)
         assert result['accepted'] is True
         x, y, z = result['point']
-        assert abs(x - 8.0) < 1e-6
-        assert abs(y - 0.0) < 1e-6
+        assert abs(x - 10.0) < 1e-6
+        assert abs(y + 2.0) < 1e-6
         assert abs(z - 0.0) < 1e-6
 
     def test_point_on_heading_ninety(self):
+        """Compass heading 90 (East) -> u = (sin 90, cos 90) = (1, 0)."""
         s = make_scanner(orbit_radius=4.0)
         s.start_scan(center=(0.0, 0.0, 0.0), orbit_radius=4.0)
 
-        # heading 90 -> u = (0, 1); d=1, R=4 -> S = (0, -3)
+        # d=1, R=4 -> S = C + (1-4)*(1,0) = (-3, 0)
         result = s.add_reading(distance=1.0, heading_deg=90.0, signal_strength=200)
         x, y, _ = result['point']
-        assert abs(x - 0.0) < 1e-6
-        assert abs(y + 3.0) < 1e-6
+        assert abs(x + 3.0) < 1e-6
+        assert abs(y - 0.0) < 1e-6
 
     def test_point_between_carrier_and_center(self):
         """Surface points must lie inside the orbit circle."""

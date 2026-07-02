@@ -141,8 +141,15 @@ class LocalizationEngine:
             # Downsample for efficiency
             scan_down = scan_pcd.voxel_down_sample(voxel_size=0.05)
 
-            # Initial guess from last pose
-            init_transform = self.current_pose
+            # scan_points arrive ALREADY in world/map frame: main.py projects
+            # each reading using position=get_position() (this engine's own
+            # current_pose translation) before calling add_point(). Seeding
+            # ICP's init_transform with current_pose would therefore apply
+            # the pose a SECOND time -- for a translation of (5,0,0) the
+            # initial misalignment would be 5 m, not 0 (Physics Audit,
+            # localization double-composition). Start from identity since
+            # the source is already approximately aligned.
+            init_transform = np.eye(4)
 
             # ICP registration
             result = o3d.pipelines.registration.registration_icp(
@@ -160,12 +167,24 @@ class LocalizationEngine:
 
             fitness = result.fitness
             rmse = result.inlier_rmse
+            # Fitness alone is an inlier-count ratio at map_matching_distance
+            # (2.0 m by default) -- a pose off by 1-1.5 m can still match
+            # nearly every point, reporting confidence ~1.0 for a
+            # meter-scale error (Physics Audit H3). Require the residual to
+            # be small too.
+            rmse_ok = rmse <= 0.15
 
             # Update state based on result
-            if fitness >= self.config.confidence_threshold:
-                # Good localization
+            if fitness >= self.config.confidence_threshold and rmse_ok:
+                # Good localization. result.transformation is a MAP-FRAME
+                # correction to the already-projected (already current_pose-
+                # transformed) scan, so it composes on the LEFT of the
+                # existing pose: new_pose = correction @ old_pose (Physics
+                # Audit, localization double-composition -- storing
+                # result.transformation directly, as before, alternated the
+                # pose between "absolute" and "residual" every cycle).
                 self.last_pose = self.current_pose.copy()
-                self.current_pose = result.transformation
+                self.current_pose = result.transformation @ self.current_pose
                 self.confidence = fitness
                 self.consecutive_failures = 0
                 self.is_lost = False
@@ -201,7 +220,7 @@ class LocalizationEngine:
 
                 return {
                     'success': False,
-                    'error': 'Low confidence match',
+                    'error': 'Residual too high' if not rmse_ok else 'Low confidence match',
                     'position': tuple(self.current_pose[:3, 3]),
                     'confidence': round(fitness, 3),
                     'is_lost': self.is_lost
@@ -362,20 +381,40 @@ class ParticleFilterLocalizer:
             self.particles[:, 0] += dx + noise[:, 0]
             self.particles[:, 1] += dy + noise[:, 1]
             self.particles[:, 2] += dtheta + noise[:, 2]
+            # Wrap heading to [-pi, pi) after every motion update so it
+            # never grows unbounded across the +/-pi branch cut (feeds
+            # get_estimate's circular mean below).
+            self.particles[:, 2] = (self.particles[:, 2] + np.pi) % (2 * np.pi) - np.pi
 
-        # Measurement update
+        # Measurement update in LOG space (Physics Audit C7): the linear
+        # Gaussian likelihood exp(-0.5*(diff/0.3)^2) underflows to EXACTLY
+        # 0.0 in IEEE-754 for |diff| > ~11.6 m (well within the 12 m sensor
+        # range), which can zero out every particle's weight in one step.
+        log_weights = np.log(np.maximum(self.weights, 1e-300))
         for i in range(self.num_particles):
             expected_distance = self._ray_cast(
                 self.particles[i, 0],
                 self.particles[i, 1],
                 self.particles[i, 2]
             )
-            # Gaussian likelihood
             diff = distance_reading - expected_distance
-            self.weights[i] *= np.exp(-0.5 * (diff / 0.3) ** 2)
+            log_weights[i] += -0.5 * (diff / 0.3) ** 2
 
-        # Normalize weights
-        self.weights /= np.sum(self.weights) + 1e-10
+        # Max-subtraction before exponentiating keeps the largest weight at
+        # exp(0)=1 regardless of how negative the raw log-likelihoods are,
+        # avoiding underflow, then normalize exactly (no epsilon-in-
+        # denominator, which previously left weights summing to < 1 and
+        # made np.random.choice raise ValueError in _resample).
+        log_weights -= np.max(log_weights)
+        weights = np.exp(log_weights)
+        total = np.sum(weights)
+        if total <= 0 or not np.isfinite(total):
+            # Every particle disagrees badly with the measurement (e.g.
+            # kidnapped-robot scenario) -- reset to uniform rather than
+            # dividing by a near-zero sum.
+            self.weights = np.full(self.num_particles, 1.0 / self.num_particles)
+        else:
+            self.weights = weights / total
 
         # Resample if effective particle count is low
         neff = 1.0 / np.sum(self.weights ** 2)
@@ -425,10 +464,17 @@ class ParticleFilterLocalizer:
         if not self.is_initialized:
             return 0, 0, 0, 0
 
-        # Weighted mean
+        # Weighted mean. theta uses the CIRCULAR mean (Physics Audit H7):
+        # a linear average of angles straddling the +/-pi wrap is wrong by
+        # up to 180 deg -- e.g. particles at +3.1 and -3.1 rad (both
+        # pointing ~178 deg, essentially agreeing) average to 0.0 rad under
+        # a linear mean, the worst possible answer with the highest
+        # apparent agreement.
         x = np.average(self.particles[:, 0], weights=self.weights)
         y = np.average(self.particles[:, 1], weights=self.weights)
-        theta = np.average(self.particles[:, 2], weights=self.weights)
+        sin_mean = np.average(np.sin(self.particles[:, 2]), weights=self.weights)
+        cos_mean = np.average(np.cos(self.particles[:, 2]), weights=self.weights)
+        theta = np.arctan2(sin_mean, cos_mean)
 
         # Confidence based on particle spread
         spread = np.std(self.particles[:, :2], axis=0).mean()

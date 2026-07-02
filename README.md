@@ -107,6 +107,8 @@ Key environment variables (full reference in
 |----------|---------|---------|
 | `LIDAR_PORT` | `/dev/ttyUSB0` | Serial device |
 | `LIDAR_API_TOKEN` | *(auto)* | Persistent API token |
+| `LIDAR_MAX_RANGE_M` | `4.0` | Max valid range; underwater 850nm returns don't exist past a few meters |
+| `LIDAR_MEDIUM_INDEX` | `1.333` | ToF medium refractive index; `1.0` for bench/air testing |
 | `CORS_ORIGINS` | localhost + blueos.local | Allowed web origins |
 | `REQUIRE_WS_AUTH` | `false` | Require token on WebSocket connect |
 | `DATA_DIR` | `/app/data` | Maps/profiles/objects/logs root |
@@ -165,6 +167,7 @@ Dependency-light suites (`test_security.py`, `test_data_quality.py`,
 | [`docs/API.md`](docs/API.md) | Full REST reference |
 | [`docs/TESTING.md`](docs/TESTING.md) | Test layout and CI notes |
 | [`RISK_MANAGEMENT.md`](RISK_MANAGEMENT.md) | ISO 14971 hazard analysis |
+| [`PHYSICS_AUDIT.md`](PHYSICS_AUDIT.md) | Physics/engineering correctness audit (ToF, coordinate frames, ICP, filters) |
 | [`PATENT.md`](PATENT.md) | IP / patent declaration |
 
 ---

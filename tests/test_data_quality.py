@@ -74,6 +74,69 @@ class TestStatisticalFilters:
         assert rejected < 15
 
 
+class TestRegimeChange:
+    """Physics Audit C8: a legitimate step change must not permanently
+    lock out the new regime."""
+
+    def test_zscore_lockout_recovers_after_threshold(self):
+        v = DataQualityValidator(min_samples=10, z_threshold=3.0,
+                                 regime_change_after=5)
+        # Establish a stable regime around 2.0m with slight jitter (a
+        # perfectly uniform window has std=0/iqr=0, which trivially
+        # disables both statistical gates -- not representative of a real
+        # sensor).
+        for i in range(30):
+            v.validate(distance=2.0 + (0.005 if i % 2 else -0.005),
+                      signal_strength=200)
+
+        # A real step to 6.0m: first several readings are statistical
+        # outliers against the 2.0m window and get rejected...
+        results = [v.validate(distance=6.0, signal_strength=200)
+                   for _ in range(4)]
+        assert all(r.accepted is False for r in results)
+
+        # ...but after regime_change_after consecutive rejections, the
+        # filter must recover instead of rejecting forever.
+        recovered = [v.validate(distance=6.0, signal_strength=200)
+                    for _ in range(10)]
+        assert any(r.accepted for r in recovered)
+        assert v.regime_changes >= 1
+
+    def test_rate_gate_lockout_recovers(self):
+        v = DataQualityValidator(min_samples=5, max_rate_m_per_s=15.0,
+                                 regime_change_after=3)
+        t = 0.0
+        v.validate(distance=2.0, signal_strength=200, timestamp=t)
+
+        # Large instantaneous jump repeatedly rejected by the rate gate...
+        for _ in range(2):
+            t += 0.01
+            r = v.validate(distance=8.0, signal_strength=200, timestamp=t)
+            assert r.accepted is False
+
+        # ...must eventually recover rather than reject forever, since
+        # _last_distance never advances on a pure rate-based reject.
+        recovered = False
+        for _ in range(10):
+            t += 0.01
+            r = v.validate(distance=8.0, signal_strength=200, timestamp=t)
+            if r.accepted:
+                recovered = True
+                break
+        assert recovered
+
+    def test_physical_bound_rejects_do_not_trigger_regime_change(self):
+        """Out-of-range/low-signal readings are genuinely invalid, not a
+        regime change -- repeating them must never force an accept."""
+        v = DataQualityValidator(min_range=0.1, max_range=12.0,
+                                 regime_change_after=3)
+        for _ in range(10):
+            r = v.validate(distance=99.0, signal_strength=200)
+            assert r.accepted is False
+            assert r.reason == 'out_of_range'
+        assert v.regime_changes == 0
+
+
 class TestRateOfChange:
     def test_impossible_jump_rejected(self):
         v = DataQualityValidator(min_samples=5, max_rate_m_per_s=15.0)

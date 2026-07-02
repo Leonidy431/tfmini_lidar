@@ -27,6 +27,9 @@ class LiDARReading:
     timestamp: datetime
     temperature: float  # Celsius
     valid: bool = True
+    # Monotonic capture time (time.monotonic()), immune to wall-clock/NTP
+    # steps. Used for rate-of-change gating; None only in legacy call sites.
+    mono_timestamp: Optional[float] = None
 
     def to_dict(self) -> dict:
         return {
@@ -66,16 +69,31 @@ class TFminiSDriver:
     CMD_RESTORE_DEFAULT = bytes([0x10])
     CMD_SAVE_SETTINGS = bytes([0x11])
 
+    # TFmini-S protocol sentinels (datasheet): these are status codes, not
+    # distances, and must never be treated as valid measurements.
+    SENTINEL_WEAK_SIGNAL_CM = 65535   # Strength < 100: pulse timing invalid
+    SENTINEL_SATURATED_CM = 65532     # Strength == 65535: receiver overexposed
+    STRENGTH_SATURATED = 65535
+
     def __init__(self, port: str, baudrate: int = 115200, timeout: float = 1.0,
-                 min_signal: int = 0, min_range_m: float = 0.0,
-                 max_range_m: float = 12.0):
+                 min_signal: int = 100, min_range_m: float = 0.1,
+                 max_range_m: float = 12.0, medium_refractive_index: float = 1.0):
         self.port = port
         self.baudrate = baudrate
         self.timeout = timeout
-        # Data-quality gates applied at frame parse time (Data Quality #1, #6)
+        # Data-quality gates applied at frame parse time (Data Quality #1, #6).
+        # Defaults are the TFmini-S datasheet floor (Physics Audit H1): a
+        # driver built with no explicit config must still reject noise-floor
+        # and blind-zone readings, not just when main.py happens to
+        # configure it correctly.
         self.min_signal = min_signal
         self.min_range_m = min_range_m
         self.max_range_m = max_range_m
+        # Time-of-flight range assumes propagation in air (n=1.0); underwater
+        # the true geometric range is the reported range divided by the
+        # medium's refractive index (Physics Audit C1). Default 1.0 (no-op,
+        # in-air/bench); the application sets this to ~1.333 for water.
+        self.medium_refractive_index = medium_refractive_index
 
         self.serial_conn: Optional[serial.Serial] = None
         self.is_running = False
@@ -311,9 +329,10 @@ class TFminiSDriver:
     def _parse_frame(self, frame: bytes) -> Optional[LiDARReading]:
         """Parse TFmini-S data frame"""
         try:
+            mono_ts = time.monotonic()
+
             # Distance in cm (convert to meters)
             distance_cm = frame[2] | (frame[3] << 8)
-            distance_m = distance_cm / 100.0
 
             # Signal strength
             strength = frame[4] | (frame[5] << 8)
@@ -322,8 +341,20 @@ class TFminiSDriver:
             temp_raw = frame[6] | (frame[7] << 8)
             temperature = temp_raw / 8.0 - 256.0
 
+            # Reject the datasheet's in-band status sentinels before treating
+            # distance_cm as a measurement (Physics Audit H1): these encode
+            # "pulse timing invalid" / "receiver saturated", not a range.
+            is_sentinel = (distance_cm >= self.SENTINEL_SATURATED_CM
+                          or strength >= self.STRENGTH_SATURATED)
+
+            # Time-of-flight range assumes air propagation; divide by the
+            # medium's refractive index to recover true geometric range
+            # (Physics Audit C1). medium_refractive_index=1.0 is a no-op.
+            distance_m = (distance_cm / 100.0) / self.medium_refractive_index
+
             # Validate reading against physical + signal-quality gates.
-            valid = (distance_cm > 0 and
+            valid = (not is_sentinel and
+                    distance_cm > 0 and
                     distance_m >= self.min_range_m and
                     distance_m <= self.max_range_m and
                     strength >= max(1, self.min_signal))
@@ -333,7 +364,8 @@ class TFminiSDriver:
                 signal_strength=strength,
                 timestamp=datetime.now(),
                 temperature=temperature,
-                valid=valid
+                valid=valid,
+                mono_timestamp=mono_ts
             )
 
         except Exception as e:

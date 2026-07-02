@@ -32,7 +32,7 @@ class Waypoint:
     index: int
     timestamp: datetime
     position: Tuple[float, float, float]  # x, y, z
-    heading: float  # degrees
+    heading: float  # degrees, clockwise-positive from North (compass/NED)
     distance_reading: float  # meters
     signal_strength: int
     velocity: Tuple[float, float, float] = (0.0, 0.0, 0.0)
@@ -121,6 +121,11 @@ class ProfileRecorder:
         self.min_distance = getattr(Config.lidar, 'min_range', 0.1)
         self.max_distance = getattr(Config.lidar, 'max_range', 12.0)
         self.rejected_waypoints = 0
+        # Waypoints whose finite-difference velocity implies an unreasonable
+        # speed (Physics Audit M2) -- e.g. a bad SLAM/localization pose jump.
+        # Flagged, not silently dropped, since rejecting could lose real
+        # fast-motion data; the count is a data-quality signal for the operator.
+        self.implausible_speed_waypoints = 0
 
         self.current_profile: Optional[NavigationProfile] = None
         self.is_recording = False
@@ -128,6 +133,7 @@ class ProfileRecorder:
 
         # Position tracking
         self.last_position = np.array([0.0, 0.0, 0.0])
+        self.last_waypoint_time: Optional[datetime] = None
         self.total_distance = 0.0
         self.waypoint_counter = 0
 
@@ -155,6 +161,7 @@ class ProfileRecorder:
             self.total_distance = 0.0
             self.waypoint_counter = 0
             self.last_position = np.array([0.0, 0.0, 0.0])
+            self.last_waypoint_time = None
 
             logger.info(f"Started recording profile: {name}")
             return True
@@ -181,9 +188,15 @@ class ProfileRecorder:
                      heading: float,
                      distance_reading: float,
                      signal_strength: int,
-                     velocity: Tuple[float, float, float] = (0, 0, 0),
+                     velocity: Tuple[float, float, float] = None,
                      features: Dict = None) -> bool:
-        """Add a waypoint to the current profile"""
+        """Add a waypoint to the current profile.
+
+        If velocity is not explicitly provided, it is computed as the
+        finite-difference position change since the last waypoint (Physics
+        Audit M2) so NavigationConfig.speed_limit and playback pacing have a
+        real value to work with instead of a permanent (0,0,0) placeholder.
+        """
         with self.lock:
             if not self.is_recording or not self.current_profile:
                 return False
@@ -215,6 +228,27 @@ class ProfileRecorder:
             features.setdefault('signal_strength', signal_strength)
             features.setdefault('quality', 'good')
 
+            # Finite-difference velocity when the caller hasn't supplied one.
+            now = datetime.now()
+            if velocity is None:
+                dt = (now - self.last_waypoint_time).total_seconds() \
+                    if self.last_waypoint_time else 0.0
+                if dt > 0:
+                    computed_vel = (pos_array - self.last_position) / dt
+                    speed = float(np.linalg.norm(computed_vel))
+                    max_reasonable_speed = self.config.speed_limit * 3.0
+                    if speed > max_reasonable_speed:
+                        self.implausible_speed_waypoints += 1
+                        logger.warning(
+                            f"Waypoint speed {speed:.2f} m/s exceeds "
+                            f"{max_reasonable_speed:.2f} m/s -- possible "
+                            f"pose estimator glitch"
+                        )
+                    velocity = tuple(computed_vel)
+                else:
+                    velocity = (0.0, 0.0, 0.0)
+            self.last_waypoint_time = now
+
             # Update total distance
             self.total_distance += distance_from_last
             self.last_position = pos_array
@@ -222,7 +256,7 @@ class ProfileRecorder:
             # Create waypoint
             waypoint = Waypoint(
                 index=self.waypoint_counter,
-                timestamp=datetime.now(),
+                timestamp=now,
                 position=position,
                 heading=heading,
                 distance_reading=distance_reading,
@@ -361,6 +395,7 @@ class ProfileRecorder:
             'profile_name': self.current_profile.name if self.current_profile else None,
             'waypoint_count': self.waypoint_counter,
             'rejected_waypoints': self.rejected_waypoints,
+            'implausible_speed_waypoints': self.implausible_speed_waypoints,
             'total_distance': round(self.total_distance, 2),
             'duration_seconds': (datetime.now() - self.start_time).total_seconds() if self.start_time and self.is_recording else 0
         }
@@ -470,7 +505,14 @@ class ProfileNavigator:
                 'total_waypoints': len(self.current_profile.waypoints),
                 'distance_to_waypoint': round(self.distance_to_waypoint, 3),
                 'heading_error': round(self.heading_error, 1),
-                'heading_correction': 'left' if self.heading_error > 0 else 'right',
+                # heading_error is degrees clockwise-positive (compass
+                # convention, see Waypoint.heading). A positive error means
+                # the target bearing is clockwise of the current heading, so
+                # the correction is a RIGHT turn -- the sign was previously
+                # inverted (Physics Audit H2).
+                'heading_correction': ('right' if self.heading_error > 0
+                                       else 'left' if self.heading_error < 0
+                                       else 'none'),
                 'distance_deviation': round(self.distance_deviation, 3),
                 'progress': round(self.progress_percent, 1),
                 'expected_distance': target_wp.distance_reading,

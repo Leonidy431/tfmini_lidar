@@ -69,19 +69,43 @@ class SLAMEngine:
         # Statistics
         self.total_points = 0
         self.total_scans = 0
+        # Accumulated registration-error proxy (Physics Audit: dead
+        # reckoning drift semantics) -- grows with mission length/scan
+        # count, unlike last_displacement below.
         self.drift_estimate = 0.0
+        # Most recent single-scan translation magnitude, reported
+        # separately so it is never confused with accumulated drift.
+        self.last_displacement = 0.0
 
         # Thread safety
         self.lock = threading.Lock()
 
-        # Map bounds
+        # Map bounds. Seeded at +/-infinity (the identity elements for
+        # running min/max), not the zero vector: seeding at zero forces the
+        # origin into every bounding box regardless of where the data
+        # actually is (Physics Audit H6).
         self.map_bounds = {
-            'min': np.array([0.0, 0.0, 0.0]),
-            'max': np.array([0.0, 0.0, 0.0])
+            'min': np.full(3, np.inf),
+            'max': np.full(3, -np.inf)
         }
+
+        # Re-orthonormalize the accumulated pose's rotation block every N
+        # scans (Physics Audit M1): repeated float64 matrix products do not
+        # preserve orthogonality, so a long chain of composed transforms
+        # accumulates spurious scale/shear on the SO(3) block.
+        self._scans_since_reortho = 0
 
     # Hard cap to bound memory if processing ever stalls (Performance #1).
     MAX_BUFFER_MULTIPLIER = 2
+
+    # Re-orthonormalization cadence (Physics Audit M1).
+    REORTHONORMALIZE_EVERY = 50
+
+    # Degeneracy threshold for point-to-plane ICP eligibility (Physics
+    # Audit C6): ratio of 2nd-largest to largest covariance eigenvalue.
+    # Below this the scan is effectively collinear/planar and normals are
+    # numerically arbitrary.
+    PLANARITY_EIGENVALUE_RATIO = 0.01
 
     def add_point(self, x: float, y: float, z: float):
         """Add a single point to the scan buffer"""
@@ -161,26 +185,50 @@ class SLAMEngine:
 
         # Motion pre-check (Performance #2): if the scan centroid has barely
         # moved since the reference, skip the expensive ICP and reuse identity.
-        # This avoids re-registering near-duplicate stationary scans.
+        # Centroid displacement ALONE is blind to pure rotation -- a vehicle
+        # yawing in place in front of a roughly symmetric scene can leave the
+        # centroid essentially unchanged while the sampled geometry changes
+        # completely (Physics Audit H4). Also compare scan covariance so
+        # rotation-dominated motion is not misclassified as "no motion".
         motion_threshold = getattr(self.config, 'motion_threshold', 0.01)
-        ref_centroid = np.mean(np.asarray(self.reference_cloud.pcd.points), axis=0)
+        ref_points = np.asarray(self.reference_cloud.pcd.points)
+        ref_centroid = np.mean(ref_points, axis=0)
         cur_centroid = np.mean(points_3d, axis=0)
-        if np.linalg.norm(cur_centroid - ref_centroid) < motion_threshold:
-            logger.debug("Motion below threshold, skipping ICP")
+        centroid_shift = np.linalg.norm(cur_centroid - ref_centroid)
+
+        cov_shift = 0.0
+        if len(ref_points) >= 3 and len(points_3d) >= 3:
+            cov_diff = np.cov(points_3d.T) - np.cov(ref_points.T)
+            cov_shift = float(np.linalg.norm(cov_diff, ord='fro'))
+
+        if centroid_shift < motion_threshold and cov_shift < motion_threshold:
+            logger.debug("Motion below threshold (centroid+covariance), skipping ICP")
             return True, np.eye(4)
 
         # ICP registration
-        transformation, success = self._register_clouds(
+        transformation, success, inlier_rmse = self._register_clouds(
             current_cloud.pcd,
-            self.reference_cloud.pcd
+            self.reference_cloud.pcd,
+            points_3d
         )
 
         if success:
             # Transform current cloud to global frame
             current_cloud.pcd.transform(transformation)
 
-            # Update current pose
-            self.current_pose = transformation @ self.current_pose
+            # Compose the scan-frame delta onto the world pose. ICP returns
+            # a transform mapping the current (scan-frame) cloud into the
+            # reference frame -- a relative delta expressed in the previous
+            # scan's frame must be RIGHT-multiplied onto the world pose
+            # (T_w_cur = T_w_prev @ T_prev_cur). Left-multiplying (as before)
+            # is only valid for a delta already expressed in world frame,
+            # and silently corrupts the trajectory on any non-straight-line
+            # motion (Physics Audit C5).
+            self.current_pose = self.current_pose @ transformation
+            self._scans_since_reortho += 1
+            if self._scans_since_reortho >= self.REORTHONORMALIZE_EVERY:
+                self._reorthonormalize_pose()
+                self._scans_since_reortho = 0
 
             # Add to accumulated cloud
             self.accumulated_cloud = self.accumulated_cloud + current_cloud.pcd
@@ -202,41 +250,101 @@ class SLAMEngine:
             # Update bounds
             self._update_bounds(np.asarray(current_cloud.pcd.points))
 
-            # Estimate drift
-            self.drift_estimate = np.linalg.norm(transformation[:3, 3])
+            # Accumulate drift as a registration-error proxy, not the raw
+            # per-scan displacement (Physics Audit H-dead-reckoning): drift
+            # is the growing, unbounded integration error of chained
+            # relative transforms, not an instantaneous velocity proxy. A
+            # vehicle moving fast with perfect registration should not
+            # report large "drift"; a vehicle that has chained many noisy
+            # registrations should, even while momentarily stationary.
+            self.drift_estimate += inlier_rmse
+            self.last_displacement = float(np.linalg.norm(transformation[:3, 3]))
 
-            logger.debug(f"Scan registered (displacement: {self.drift_estimate:.3f}m)")
+            logger.debug(
+                f"Scan registered (displacement: {self.last_displacement:.3f}m, "
+                f"inlier_rmse: {inlier_rmse:.4f}m)"
+            )
             return True, transformation
         else:
             logger.warning("Scan registration failed")
             return False, np.eye(4)
 
+    def _reorthonormalize_pose(self):
+        """Re-project the accumulated pose's rotation block onto SO(3).
+
+        Chained float64 matrix products drift off orthogonality over a long
+        mission (Physics Audit M1); SVD re-projection is the standard fix.
+        """
+        R = self.current_pose[:3, :3]
+        U, _, Vt = np.linalg.svd(R)
+        Rn = U @ Vt
+        if np.linalg.det(Rn) < 0:
+            Rn = U @ np.diag([1, 1, -1]) @ Vt
+        self.current_pose[:3, :3] = Rn
+
+    def _is_geometrically_degenerate(self, points_3d: np.ndarray) -> bool:
+        """
+        Check whether a point set is too close to collinear/planar for
+        point-to-plane ICP to be well-posed (Physics Audit C6).
+
+        Single-point-LiDAR pseudo-scans are frequently near-collinear
+        (readings along one beam sweep). Surface-normal estimation on such
+        data returns a numerically arbitrary normal (rank-deficient local
+        covariance), and point-to-plane ICP then solves an under-constrained
+        system that can report high fitness for an arbitrary transform.
+        """
+        if len(points_3d) < 3:
+            return True
+        try:
+            eigenvalues = np.linalg.eigvalsh(np.cov(points_3d.T))
+        except np.linalg.LinAlgError:
+            return True
+        eigenvalues = np.sort(np.abs(eigenvalues))
+        if eigenvalues[-1] < 1e-12:
+            return True
+        return bool((eigenvalues[1] / eigenvalues[-1]) < self.PLANARITY_EIGENVALUE_RATIO)
+
     def _register_clouds(self, source: o3d.geometry.PointCloud,
-                        target: o3d.geometry.PointCloud) -> Tuple[np.ndarray, bool]:
+                        target: o3d.geometry.PointCloud,
+                        source_points: np.ndarray = None
+                        ) -> Tuple[np.ndarray, bool, float]:
         """
         Register source to target using ICP
 
         Returns:
-            (transformation_matrix, success)
+            (transformation_matrix, success, inlier_rmse)
         """
         try:
             # Downsample for faster registration
             source_down = source.voxel_down_sample(voxel_size=self.config.voxel_size)
             target_down = target.voxel_down_sample(voxel_size=self.config.voxel_size)
 
-            # Estimate normals for point-to-plane ICP
-            source_down.estimate_normals(
-                search_param=o3d.geometry.KDTreeSearchParamHybrid(
-                    radius=self.config.voxel_size * 2,
-                    max_nn=30
-                )
+            # Degenerate (near-collinear/planar) geometry makes normal
+            # estimation and point-to-plane ICP numerically unreliable;
+            # fall back to point-to-point, which needs no normals and is
+            # well-posed on any non-degenerate point count (Physics Audit
+            # C6).
+            degenerate = self._is_geometrically_degenerate(
+                source_points if source_points is not None
+                else np.asarray(source_down.points)
             )
-            target_down.estimate_normals(
-                search_param=o3d.geometry.KDTreeSearchParamHybrid(
-                    radius=self.config.voxel_size * 2,
-                    max_nn=30
+
+            if degenerate:
+                estimation = o3d.pipelines.registration.TransformationEstimationPointToPoint()
+            else:
+                source_down.estimate_normals(
+                    search_param=o3d.geometry.KDTreeSearchParamHybrid(
+                        radius=self.config.voxel_size * 2,
+                        max_nn=30
+                    )
                 )
-            )
+                target_down.estimate_normals(
+                    search_param=o3d.geometry.KDTreeSearchParamHybrid(
+                        radius=self.config.voxel_size * 2,
+                        max_nn=30
+                    )
+                )
+                estimation = o3d.pipelines.registration.TransformationEstimationPointToPlane()
 
             # ICP registration
             result = o3d.pipelines.registration.registration_icp(
@@ -244,7 +352,7 @@ class SLAMEngine:
                 target_down,
                 self.config.max_correspondence_distance,
                 np.eye(4),
-                o3d.pipelines.registration.TransformationEstimationPointToPlane(),
+                estimation,
                 o3d.pipelines.registration.ICPConvergenceCriteria(
                     max_iteration=self.config.max_iterations,
                     relative_fitness=1e-6,
@@ -252,12 +360,17 @@ class SLAMEngine:
                 )
             )
 
-            success = result.fitness > self.config.icp_threshold
-            return result.transformation, success
+            # Fitness alone is an inlier-COUNT ratio at max_correspondence_
+            # distance; two scans misaligned by a large fraction of that
+            # distance can still report fitness near 1.0. Gate on the
+            # actual residual (inlier_rmse) too (Physics Audit H3).
+            rmse_ok = result.inlier_rmse <= 2.5 * self.config.voxel_size
+            success = (result.fitness > self.config.icp_threshold) and rmse_ok
+            return result.transformation, success, result.inlier_rmse
 
         except Exception as e:
             logger.error(f"ICP registration error: {e}")
-            return np.eye(4), False
+            return np.eye(4), False, 0.0
 
     def _update_bounds(self, points: np.ndarray):
         """Update map bounds"""
@@ -306,9 +419,11 @@ class SLAMEngine:
             self.total_points = 0
             self.total_scans = 0
             self.drift_estimate = 0.0
+            self.last_displacement = 0.0
+            self._scans_since_reortho = 0
             self.map_bounds = {
-                'min': np.array([0.0, 0.0, 0.0]),
-                'max': np.array([0.0, 0.0, 0.0])
+                'min': np.full(3, np.inf),
+                'max': np.full(3, -np.inf)
             }
         logger.info("SLAM engine cleared")
 
@@ -350,23 +465,32 @@ class SLAMEngine:
 
     def get_statistics(self) -> dict:
         """Get engine statistics"""
+        has_bounds = bool(np.all(np.isfinite(self.map_bounds['min']))
+                          and np.all(np.isfinite(self.map_bounds['max'])))
+        bounds_min = self.map_bounds['min'] if has_bounds else np.zeros(3)
+        bounds_max = self.map_bounds['max'] if has_bounds else np.zeros(3)
+
         return {
             'total_points': self.total_points,
             'total_scans': self.total_scans,
             'buffer_size': len(self.scan_buffer),
+            # Accumulated registration-error proxy (grows with mission
+            # length), NOT the last per-scan displacement -- see
+            # last_displacement for that (Physics Audit: drift semantics).
             'drift_estimate': round(self.drift_estimate, 4),
+            'last_displacement': round(self.last_displacement, 4),
             'current_position': {
                 'x': round(self.current_pose[0, 3], 3),
                 'y': round(self.current_pose[1, 3], 3),
                 'z': round(self.current_pose[2, 3], 3)
             },
             'map_bounds': {
-                'min': self.map_bounds['min'].tolist(),
-                'max': self.map_bounds['max'].tolist()
+                'min': bounds_min.tolist(),
+                'max': bounds_max.tolist()
             },
             'map_size': {
-                'x': round(self.map_bounds['max'][0] - self.map_bounds['min'][0], 2),
-                'y': round(self.map_bounds['max'][1] - self.map_bounds['min'][1], 2),
-                'z': round(self.map_bounds['max'][2] - self.map_bounds['min'][2], 2)
-            }
+                'x': round(bounds_max[0] - bounds_min[0], 2),
+                'y': round(bounds_max[1] - bounds_min[1], 2),
+                'z': round(bounds_max[2] - bounds_min[2], 2)
+            } if has_bounds else {'x': 0, 'y': 0, 'z': 0}
         }

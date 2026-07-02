@@ -54,7 +54,8 @@ class DataQualityValidator:
                  max_range: float = 12.0,
                  min_range: float = 0.1,
                  max_rate_m_per_s: float = 15.0,
-                 temp_coefficient: float = 0.0):
+                 temp_coefficient: float = 0.0,
+                 regime_change_after: int = 5):
         self.window_size = window_size
         self.iqr_multiplier = iqr_multiplier
         self.z_threshold = z_threshold
@@ -70,6 +71,15 @@ class DataQualityValidator:
         # set a coefficient only after empirical calibration.
         self.temp_coefficient = temp_coefficient
         self._baseline_temp: Optional[float] = None
+        # Consecutive statistical/rate rejections before treating the stream
+        # as a genuine regime change (scene edge, sensor sweep past an
+        # occlusion boundary) rather than noise, and re-warming the filters
+        # (Physics Audit C8). Without this, a single real step change
+        # permanently locks out every subsequent reading in the new regime:
+        # rejected samples never update _window OR _last_distance, so the
+        # stale reference keeps rejecting forever.
+        self.regime_change_after = regime_change_after
+        self._consecutive_rejects = 0
 
         # Sliding window of accepted distances (meters)
         self._window: Deque[float] = deque(maxlen=window_size)
@@ -89,6 +99,7 @@ class DataQualityValidator:
         self.rejected_iqr = 0
         self.rejected_zscore = 0
         self.rejected_rate = 0
+        self.regime_changes = 0
 
     def compensate_temperature(self, distance: float, temperature: float) -> float:
         """Apply optional temperature-drift correction.
@@ -118,12 +129,37 @@ class DataQualityValidator:
         """
         self.total_checked += 1
 
-        # Hard physical bounds first (cheap rejects)
+        # Hard physical bounds first (cheap rejects). These represent
+        # genuinely impossible/unreliable readings (never a real regime
+        # change), so they do NOT count toward the regime-change counter.
         if distance < self.min_range or distance > self.max_range:
-            return self._reject('out_of_range', 'range')
+            return self._reject('out_of_range', 'range', count_toward_regime=False)
 
         if signal_strength < self.signal_threshold:
-            return self._reject('low_signal', 'signal')
+            return self._reject('low_signal', 'signal', count_toward_regime=False)
+
+        # If enough consecutive statistical/rate rejections have piled up,
+        # the "outlier" is more likely a genuine scene change than noise
+        # (Physics Audit C8). Flush the stale reference instead of
+        # rejecting forever, and accept this reading as the start of a new
+        # regime.
+        if self._consecutive_rejects >= self.regime_change_after:
+            self.regime_changes += 1
+            logger.info(
+                f"Data quality regime change after "
+                f"{self._consecutive_rejects} consecutive rejections; "
+                f"re-warming filters at distance={distance}"
+            )
+            self._window.clear()
+            self._last_distance = None
+            self._last_time = None
+            self._consecutive_rejects = 0
+            self._accept(distance, timestamp)
+            return QualityResult(
+                accepted=True,
+                reason='regime_change',
+                quality_score=self.quality_score
+            )
 
         # Rate-of-change gate (needs a previous timed reading)
         if (timestamp is not None and self._last_distance is not None
@@ -177,10 +213,14 @@ class DataQualityValidator:
         self._last_distance = distance
         if timestamp is not None:
             self._last_time = timestamp
+        self._consecutive_rejects = 0
 
-    def _reject(self, reason: str, category: str, z_score: float = 0.0) -> QualityResult:
+    def _reject(self, reason: str, category: str, z_score: float = 0.0,
+               count_toward_regime: bool = True) -> QualityResult:
         self.total_rejected += 1
         self._decisions.append(False)
+        if count_toward_regime:
+            self._consecutive_rejects += 1
 
         if category == 'range':
             self.rejected_range += 1
@@ -239,6 +279,7 @@ class DataQualityValidator:
         self._last_distance = None
         self._last_time = None
         self._baseline_temp = None
+        self._consecutive_rejects = 0
         self.total_checked = 0
         self.total_rejected = 0
         self.rejected_range = 0
@@ -246,6 +287,7 @@ class DataQualityValidator:
         self.rejected_iqr = 0
         self.rejected_zscore = 0
         self.rejected_rate = 0
+        self.regime_changes = 0
 
     def get_statistics(self) -> dict:
         """Golden-signal-style metrics for data quality."""
@@ -256,6 +298,7 @@ class DataQualityValidator:
             'total_rejected': self.total_rejected,
             'rejection_rate': round(rejection_rate, 4),
             'window_fill': len(self._window),
+            'regime_changes': self.regime_changes,
             'rejected_by': {
                 'range': self.rejected_range,
                 'signal': self.rejected_signal,

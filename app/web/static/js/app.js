@@ -643,10 +643,14 @@ function updateNavigationDisplay(data) {
     document.getElementById('headingError').textContent = `${(data.heading_error || 0).toFixed(1)}deg`;
     document.getElementById('navProgress').textContent = `${(data.progress || 0).toFixed(0)}%`;
 
-    // Update arrow direction
+    // Update arrow direction. heading_error is compass-degrees, clockwise-
+    // positive; CSS rotate() is also clockwise-positive for a positive
+    // angle, so a positive (rightward) error rotates the arrow to the
+    // right with no sign flip (Physics Audit H2 - the previous negation
+    // pointed the arrow the wrong way).
     const arrow = document.getElementById('navArrow');
     if (arrow && data.heading_error) {
-        arrow.style.transform = `rotate(${-data.heading_error}deg)`;
+        arrow.style.transform = `rotate(${data.heading_error}deg)`;
     }
 }
 

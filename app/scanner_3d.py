@@ -10,9 +10,10 @@ an inverted turntable scanner (the sensor moves, the object stays still).
 
 Orbit-scan geometry
 -------------------
-Let C be the object center, R the orbit radius, h the vehicle heading and
-u(h) = [cos h, sin h, 0] the sensor direction (aimed at C). The carrier
-position is derived as:
+Let C be the object center, R the orbit radius, h the vehicle COMPASS
+heading (degrees, clockwise-positive from North) and
+u(h) = [sin h, cos h, 0] the sensor direction (aimed at C) in the app's ENU
+world frame (x=East, y=North). The carrier position is derived as:
 
     P = C - R * u(h)
 
@@ -174,9 +175,12 @@ class Scanner3D:
             if len(self.points) >= self.config.max_points:
                 return self._reject('capacity')
 
-            # S = C + (d - R) * u(h)
+            # S = C + (d - R) * u(h). heading_deg is a COMPASS heading
+            # (clockwise-positive from North); u(h) must be expressed in the
+            # same ENU convention used everywhere else in the app (Physics
+            # Audit C4) so scanner geometry stays consistent with mapping.
             h = math.radians(heading_deg)
-            ux, uy = math.cos(h), math.sin(h)
+            ux, uy = math.sin(h), math.cos(h)
             offset = distance - self.orbit_radius  # negative: carrier side
             x = self.center[0] + offset * ux
             y = self.center[1] + offset * uy
