@@ -126,6 +126,87 @@ class TestFrameStreamParsing:
         assert len(good) == 1
 
 
+class TestPhysicsCorrections:
+    """Physics Audit C1/H1/H9: medium refraction, sentinel decoding, and
+    driver-level datasheet defaults."""
+
+    def test_medium_refractive_index_default_is_noop(self):
+        """Library-level default must stay 1.0 (air/bench) so raw driver
+        instantiation and existing unit tests are unaffected; the app
+        applies the water correction via LiDARConfig, not this default."""
+        driver = TFminiSDriver('/dev/ttyUSB0')
+        assert driver.medium_refractive_index == 1.0
+
+        reading = driver._parse_frame(build_frame(150))
+        assert reading.distance == 1.5
+
+    def test_medium_refractive_index_applied(self):
+        """distance_m = (distance_cm/100) / n -- underwater a reported
+        1.5m (n=1.0 raw) should resolve to the true ~1.125m range at
+        n=1.333."""
+        driver = TFminiSDriver('/dev/ttyUSB0', medium_refractive_index=1.333)
+        reading = driver._parse_frame(build_frame(150))
+        assert abs(reading.distance - (1.5 / 1.333)) < 1e-6
+
+    def test_weak_signal_sentinel_rejected(self):
+        """distance_cm=65535 is the TFmini-S 'pulse timing invalid'
+        sentinel, not a real 655m measurement."""
+        driver = TFminiSDriver('/dev/ttyUSB0')
+        reading = driver._parse_frame(build_frame(65535, strength=50))
+        assert reading is not None
+        assert reading.valid is False
+
+    def test_saturation_sentinel_rejected_by_distance_code(self):
+        """distance_cm=65532 is the 'receiver saturated' sentinel."""
+        driver = TFminiSDriver('/dev/ttyUSB0')
+        reading = driver._parse_frame(build_frame(65532, strength=200))
+        assert reading is not None
+        assert reading.valid is False
+
+    def test_saturated_strength_rejected_even_with_plausible_distance(self):
+        """strength==65535 (saturated receiver) must invalidate the frame
+        even when the accompanying distance looks like a normal reading --
+        a saturated pulse has unreliable timing walk (Physics Audit H1)."""
+        driver = TFminiSDriver('/dev/ttyUSB0')
+        reading = driver._parse_frame(build_frame(150, strength=65535))
+        assert reading is not None
+        assert reading.valid is False
+
+    def test_normal_frame_still_valid(self):
+        driver = TFminiSDriver('/dev/ttyUSB0')
+        reading = driver._parse_frame(build_frame(150, strength=200))
+        assert reading.valid is True
+
+    def test_datasheet_floor_defaults(self):
+        """Constructor defaults raised to the TFmini-S datasheet floor so a
+        driver built with no explicit config still rejects noise-floor and
+        blind-zone readings (Physics Audit H1)."""
+        driver = TFminiSDriver('/dev/ttyUSB0')
+        assert driver.min_signal == 100
+        assert driver.min_range_m == 0.1
+
+        weak = driver._parse_frame(build_frame(150, strength=50))
+        assert weak.valid is False
+
+        blind_zone = driver._parse_frame(build_frame(5, strength=200))  # 0.05m
+        assert blind_zone.valid is False
+
+    def test_mono_timestamp_populated(self):
+        """A monotonic capture time must be attached to every reading so
+        the rate-of-change gate is immune to wall-clock/NTP steps
+        (Physics Audit H9)."""
+        driver = TFminiSDriver('/dev/ttyUSB0')
+        reading = driver._parse_frame(build_frame(150, strength=200))
+        assert reading.mono_timestamp is not None
+        assert reading.mono_timestamp > 0
+
+    def test_mono_timestamp_monotonic_across_frames(self):
+        driver = TFminiSDriver('/dev/ttyUSB0')
+        r1 = driver._parse_frame(build_frame(150, strength=200))
+        r2 = driver._parse_frame(build_frame(150, strength=200))
+        assert r2.mono_timestamp >= r1.mono_timestamp
+
+
 class TestReadLoopWithMock:
     def test_read_loop_produces_readings(self):
         driver = TFminiSDriver('/dev/ttyUSB0')

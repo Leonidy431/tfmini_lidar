@@ -77,7 +77,15 @@ class TestTFminiSDriver:
         assert reading.valid is True
 
     def test_invalid_checksum(self):
+        """Checksum validation happens in _process_buffer, not
+        _parse_frame (which assumes it's handed an already-verified
+        frame -- see test_frame_parsing and the sentinel/saturation tests
+        in test_driver_mock.py that test _parse_frame directly). A frame
+        with a bad checksum must be dropped before ever reaching a
+        callback."""
         driver = TFminiSDriver('/dev/ttyUSB0')
+        readings = []
+        driver.add_callback(lambda r: readings.append(r))
 
         # Frame with wrong checksum
         frame = bytes([
@@ -88,8 +96,11 @@ class TestTFminiSDriver:
             0xFF  # Wrong checksum
         ])
 
-        reading = driver._parse_frame(frame)
-        assert reading is None
+        driver.buffer.extend(frame)
+        driver._process_buffer()
+
+        assert readings == []
+        assert driver.errors_count > 0
 
 
 class TestSLAMEngine:
