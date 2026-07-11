@@ -149,6 +149,32 @@ Maintain hazard analysis in `RISK_MANAGEMENT.md` for:
 Each hazard tracks Severity × Probability, design controls (mapped to source),
 and accepted residual risk. Update before every release.
 
+### Rule 6: Session Continuity Logging (30-minute cadence)
+
+**Purpose**: Enable fast context recovery after session breaks or interruptions without requiring full conversation replay.
+
+**Trigger**: Every 30 minutes during active development (commits, test changes, code modifications).
+
+**Format**: Structured continuity log entry appended to session notes or CLAUDE.md update comments covering:
+1. **Completed in last 30min**: File changes, commits pushed, tests added/fixed, blockers resolved
+2. **Current state**: Active branch, last commit hashes, test pass rate
+3. **Pending decisions**: Items awaiting user input, hardware-dependent work, deferred improvements
+4. **Modified files**: List with purpose (e.g., "app/lidar_driver.py: added mono_timestamp field for rate-gate immunity")
+5. **Next steps**: Immediate tasks for next 30-minute interval
+
+**Example entry**:
+```
+=== Session Continuity Log [14:30] ===
+Completed: Added 9 tests to test_driver_mock.py (TestPhysicsCorrections), 175/175 pass
+State: claude/physics-engineering-audit branch, commit abc123def456
+Decisions pending: D1-D8 deferred (MAVLink integration, 3D attitude, housing calibration)
+Modified: app/lidar_driver.py, tests/test_driver_mock.py, PHYSICS_AUDIT.md
+Next: Create PR, run blind-spot audit on remaining 10 domains
+```
+
+This enables a future session to pick up immediately by reading the last log entry, 
+without re-deriving the entire audit trail from git commit history.
+
 ---
 
 ## Dependencies
