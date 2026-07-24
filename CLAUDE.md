@@ -175,6 +175,97 @@ Next: Create PR, run blind-spot audit on remaining 10 domains
 This enables a future session to pick up immediately by reading the last log entry, 
 without re-deriving the entire audit trail from git commit history.
 
+### Rule 7: Algorithm Evaluation via Multi-Specialist Decision Framework (12-Phase HLD)
+
+**Purpose**: Ensure algorithmic decisions are evidence-based, peer-reviewed, and scientifically grounded across 32 specialist domains. All new algorithms and physics corrections must follow this framework.
+
+**Trigger**: When implementing new signal processing, SLAM, localization, control, or sensor algorithms; when choosing between multiple competing approaches; before major algorithmic changes.
+
+**12-Phase HLD**:
+
+| Phase | Task | Specialists | Output |
+|-------|------|-----------|--------|
+| **P1-Scoping** | Define algorithm requirements, constraints, success metrics | Domain Lead, Requirements Engineer | Requirements document with edge cases, failure modes |
+| **P2-Literature** | Search PubMed, arXiv, IEEE Xplore, Scholar for scientific precedent; extract 20-50 candidate papers | Research Specialist, ML Engineer | Annotated bibliography with approach taxonomy |
+| **P3-Approaches** | Synthesize candidate approaches from literature (~300 variants when parameterized); categorize by architecture, trade-offs | Theoretical Computer Scientist, Domain Expert (×3) | Comparison matrix: 48 evaluation parameters across all variants |
+| **P4-Evaluation** | Run each approach through 48-parameter matrix: accuracy, latency, power, memory, robustness, drift, false-positive rate, false-negative rate, generalization, numerical stability, etc. | Specialist Panel (32 experts across 8 domains) | Scored matrix: each expert rates top-10 candidates |
+| **P5-Ensemble** | Aggregate 32 expert votes using ranked-choice voting; apply domain weights (physics 30%, performance 25%, reliability 20%, etc.) | Decision Science Specialist, Panel Moderator | Ranked selection of top-3 candidates with confidence scores |
+| **P6-Adversarial** | Stress-test top-3: failure modes, edge cases, scaling limits, underwater-specific challenges (turbidity, multipath, NTP drift) | Chaos Engineering, Reliability Specialist (×2) | Failure analysis: what breaks, at what conditions, residual risk |
+| **P7-Prototyping** | Implement minimal viable versions of top-3 candidates; benchmark on historical data and simulation | ML Engineer, DevOps | Implementation code, benchmark results, resource profiles |
+| **P8-Ablation** | For selected candidate, ablate each major component; measure sensitivity to hyperparameters | Experimental Design, Statistical Specialist | Sensitivity analysis, hyperparameter tuning guidance |
+| **P9-Calibration** | Empirical tuning on ROV hardware or validated simulation; measure performance on ground-truth reference data | Field Engineer, Calibration Specialist | Calibration constants, empirical validation curves |
+| **P10-Integration** | Integrate into codebase with feature flags, health metrics, fallback modes; ensure no silent failures | Backend Engineer, Security Specialist | Clean PR with tests, metrics, graceful degradation |
+| **P11-Validation** | Automated + manual validation: unit tests, integration tests, bench testing, field trials; achieve >95% confidence interval on success metrics | QA, Test Engineer, Domain Specialist | Test report with coverage matrix, known limitations |
+| **P12-Documentation** | Document algorithm, trade-offs, failure modes, calibration procedure, scientific precedent (with citations), decision rationale | Technical Writer, Domain Expert | Algorithm doc in `docs/ALGORITHMS.md`, comments in code linking to papers |
+
+**Specialist Panel (32 experts across 8 domains)**:
+- **Physics** (4): optics/ToF, underwater acoustics, underwater navigation, sensor calibration
+- **Algorithms** (4): computer vision, SLAM/localization, signal processing, control theory
+- **Numerics** (4): numerical stability, computational geometry, linear algebra, real-time constraints
+- **Software** (4): performance profiling, memory optimization, embedded systems, real-time kernels
+- **Hardware** (3): UART/serial protocols, GPIO/actuators, sensor integration
+- **Testing** (3): statistical testing, edge-case generation, failure-mode testing
+- **Safety** (3): fault tolerance, degradation modes, underwater hazard analysis
+- **Integration** (3): API design, system integration, backward compatibility
+
+**48 Evaluation Parameters**:
+- Accuracy (8): RMS error, max error, outlier rejection rate, drift over time, convergence speed, repeatability, bias, variance
+- Latency (5): median latency, p95/p99 latency, jitter, throughput, max blockage time
+- Resource (6): memory peak/average, CPU utilization, power consumption, cache footprint, code size, I/O operations
+- Robustness (8): noise tolerance, multipath handling, turbidity effects, NTP-step immunity, saturation handling, underflow prevention, graceful degradation, failure mode count
+- Generalization (5): benchtop→field transfer, depth dependence, temperature sensitivity, age/drift, unknown-object handling
+- Compatibility (4): backward compatibility, Python version, dependency footprint, license compliance
+- Maintainability (3): code clarity, test coverage, documentation quality
+- Scientific (3): peer review status, reproducibility (code/data available), novelty score
+
+**Decision Criteria** (after P5 voting):
+- **Select**: Candidate with highest ensemble score AND passes all adversarial tests (P6) AND lower than acceptable risk threshold
+- **Defer**: If top-3 tied or risk too high → return to P2 with different literature scope or domain constraints
+- **Accept Tradeoff**: If no perfect solution → explicitly document tradeoff (e.g., "10% accuracy loss for 50% latency gain") in decision record
+
+**Output Artifacts**:
+1. `docs/ALGORITHM_<name>_DECISION.md`: Full decision record with matrix, expert votes, failure analysis, scientific precedent
+2. Code comments linking to papers: `# See [Author YEAR] https://doi.org/...`
+3. Hyperparameter tuning guide in docstring
+4. Fallback/graceful degradation on failure
+
+**Example Decision Record Format**:
+```markdown
+# Algorithm Decision: Particle Filter Likelihood (2024-01-15)
+
+## Problem
+Underwater localization particle filter underflows in log-likelihood computation.
+
+## Candidates (300 variants)
+1. Linear-space with epsilon (proposed in RTABMap)
+2. Log-space with max-subtraction (Izenman et al. 2008)
+3. Mixture model with regime detection (Thrun et al. 2005)
+
+## Expert Votes (32 panel)
+- Physics: Log-space [4/4 votes]
+- Numerics: Log-space [4/4 votes]
+- Algorithms: Log-space, Mixture [3/4, 1/4]
+- ... (other domains)
+Result: Log-space wins 28/32 votes, confidence 87.5%
+
+## Failure Modes
+- All weights identical → resampled to uniform (tested)
+- Extreme range outliers → clamped to [0.1m, 10m] in likelihood (tested)
+
+## Implementation (P7)
+- Benchmark: 1000 particles, depth 50m → 0.3ms/update
+- Memory: 12KB particle state + 4KB likelihoods
+
+## Calibration (P9)
+- Reference: manual ground-truth measurements
+- Field validation: 100 dives, RMSE 0.15m vs 0.22m (linear-space)
+
+## Papers
+- [Izenman 2008] On the Use of the Log-Likelihood Ratio...
+- [Thrun et al. 2005] Probabilistic Robotics, MIT Press
+- [RTABMap] https://github.com/introlab/rtabmap
+```
+
 ---
 
 ## Dependencies
