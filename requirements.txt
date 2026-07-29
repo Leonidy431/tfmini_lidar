@@ -3,9 +3,14 @@
 # and CVE-2024-49767 (multipart resource exhaustion).
 flask==3.0.3
 werkzeug>=3.0.6
-# flask-cors 5.0.0 closes CVE-2024-6221 and CVE-2024-1681.
-flask-cors==5.0.0
+# flask-cors 6.0.0 closes CVE-2024-6221, CVE-2024-1681 and the 5.x path-
+# matching advisories CVE-2024-6839/6844/6866 (Blind Spot Audit R2 #10).
+flask-cors==6.0.0
 flask-socketio==5.3.6
+# simple-websocket provides the real WebSocket transport for flask-socketio's
+# threading async_mode; without it every client silently degrades to HTTP
+# long-polling (Blind Spot Audit R2 domain 19 #6).
+simple-websocket==1.0.0
 
 # Serial Communication
 pyserial==3.5
@@ -36,8 +41,9 @@ h5py==3.10.0
 # Utilities
 python-dateutil==2.8.2
 pyyaml==6.0.1
-# requests 2.32.3 closes CVE-2024-35195 (cert verification bypass on reuse).
-requests==2.32.3
+# requests 2.32.4 closes CVE-2024-35195 (cert verification bypass on reuse)
+# and CVE-2024-47081 (.netrc credential leak) (Blind Spot Audit R2 #10).
+requests==2.32.4
 
 # Testing
 pytest==7.4.3

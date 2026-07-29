@@ -138,6 +138,25 @@
 
 ---
 
+## Entry 11: "обнови текст PR и продолжи по бек логу" → Blind Spot Audit R2 (domains 15–19)
+
+**User ask**: Update the PR text (done: the P9 field-validation checklist line now reads "simulation half done, hardware half pending") and continue per the backlog. The next non-hardware-blocked backlog item is Blind Spot Audit Round 2.
+
+**Outcome**: Ran three parallel specialist auditors over domains 15 (Deployment/DevOps), 16 (CI/CD), 17 (Persistence), 18 (Security), 19 (Network). **44 verified, line-referenced findings** (5 CRITICAL, 15 HIGH, 18 MEDIUM, 6 LOW), consolidated in `BLIND_SPOT_AUDIT_R2_FINDINGS.md`.
+
+Applied **12 mechanical fixes** this session (the safe, high-value ones), with a 12-test regression suite (`tests/test_persistence_hardening.py`) locking them in:
+
+- **Persistence durability** (the highest ROV impact — power loss is routine): `map_manager.py` map save is now atomic (build in `.staging`, fsync every file + the dir, then `os.replace` swap) so a cut save can't destroy the previous good map; `_save_points` checks the Open3D write bool and aborts rather than writing metadata for absent points; `load_map` validates Nx3 shape and cross-checks `metadata.point_count` (refuses truncated maps → no navigating against a phantom map), and a corrupt `metadata.json` no longer blocks an intact points file; `list_maps` isolates per-entry errors and hides staging dirs.
+- **Security hygiene**: rate limiter now evicts expired keys (was unbounded under XFF spoofing) and meters failed-auth attempts (was unlimited token guessing); client id `repr()`'d in logs (log-injection); auto-generated token logged only as an 8-char fingerprint (was cleartext in the persisted log); weak `LIDAR_API_TOKEN` (<16 chars) rejected; unused `hmac` import dropped; CORS origins trimmed + `*` rejected + `supports_credentials` dropped; `RotatingFileHandler` so `app.log` can't fill the volume.
+- **Build-breaking bugs**: `Dockerfile.arm64` inline `EXPOSE` comments (would fail the build) moved to their own lines; `docker-compose.yml` obsolete `version:` key and meaningless-under-host-networking `ports:` block removed.
+- **Dependencies**: `flask-cors` 5.0.0 → 6.0.0 and `requests` 2.32.3 → 2.32.4 (published CVEs); added `simple-websocket` (was silently degrading every WS client to long-polling).
+
+The remaining ~32 findings are logged as NEEDS-DECISION in `BLIND_SPOT_AUDIT_R2_FINDINGS.md` — they need design/deployment/security-posture decisions (add CI, gunicorn container CMD, default-on WS auth, Dockerfile.arm64 multi-stage rewrite, per-name map locks, WS emit coalescing, frontend reconnect/CSP) rather than mechanical edits, and were not guessed at. Domains 20–24 of the audit remain pending.
+
+Full suite after this work: **279/279 passing**.
+
+---
+
 ## Backlog Integration
 
 The items in this log map onto `DEVELOPMENT_BACKLOG.md` Sprint 1 tasks as follows:

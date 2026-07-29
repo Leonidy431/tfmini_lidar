@@ -10,7 +10,6 @@ Addresses critical blind spots:
 
 import re
 import os
-import hmac
 import hashlib
 import secrets
 import time
@@ -95,23 +94,32 @@ class RateLimiter:
         self.rpm = requests_per_minute
         self.window = 60  # seconds
 
+    # Hard cap on distinct client keys retained, so a flood of spoofed
+    # X-Forwarded-For values can't grow RATE_LIMIT_STORE without bound in a
+    # long-lived container (Blind Spot Audit R2 domain 18 #3).
+    MAX_TRACKED_CLIENTS = 10000
+
     def is_allowed(self, client_id: str) -> bool:
         """Check if client is within rate limit"""
         now = time.time()
 
-        if client_id not in RATE_LIMIT_STORE:
-            RATE_LIMIT_STORE[client_id] = []
+        recent = [ts for ts in RATE_LIMIT_STORE.get(client_id, []) if now - ts < self.window]
 
-        # Clean old entries
-        RATE_LIMIT_STORE[client_id] = [
-            ts for ts in RATE_LIMIT_STORE[client_id]
-            if now - ts < self.window
-        ]
-
-        if len(RATE_LIMIT_STORE[client_id]) >= self.rpm:
+        if len(recent) >= self.rpm:
+            RATE_LIMIT_STORE[client_id] = recent
             return False
 
-        RATE_LIMIT_STORE[client_id].append(now)
+        recent.append(now)
+        RATE_LIMIT_STORE[client_id] = recent
+
+        # Opportunistic eviction: drop keys whose window has fully expired so
+        # the store tracks only currently-active clients. Bounded work per
+        # call when the store grows past the cap.
+        if len(RATE_LIMIT_STORE) > self.MAX_TRACKED_CLIENTS:
+            expired = [cid for cid, tss in RATE_LIMIT_STORE.items()
+                       if not tss or (now - tss[-1]) >= self.window]
+            for cid in expired:
+                RATE_LIMIT_STORE.pop(cid, None)
         return True
 
 
@@ -160,13 +168,25 @@ def require_auth(f: Callable) -> Callable:
         if not token:
             token = request.args.get('api_key')
 
+        # Meter failed-auth attempts (Blind Spot Audit R2 domain 18 #4):
+        # require_auth wraps require_rate_limit, so without this a flood of
+        # missing/invalid-token requests would never reach the rate limiter
+        # -- unlimited credential guessing and log flooding. Only the failure
+        # paths consult the limiter here, so a valid request is still metered
+        # exactly once by the inner require_rate_limit.
         if not token:
+            if not rate_limiter.is_allowed(get_client_id()):
+                return jsonify({'error': 'Rate limit exceeded'}), 429
             return jsonify({'error': 'Authentication required'}), 401
 
         # Validate token
         token_hash = hash_token(token)
         if token_hash not in API_TOKENS:
-            logger.warning(f"Invalid token attempt from {get_client_id()}")
+            if not rate_limiter.is_allowed(get_client_id()):
+                return jsonify({'error': 'Rate limit exceeded'}), 429
+            # repr() the client id so a newline-laced X-Forwarded-For can't
+            # forge log records (domain 18 #9).
+            logger.warning(f"Invalid token attempt from {get_client_id()!r}")
             return jsonify({'error': 'Invalid token'}), 401
 
         g.authenticated = True
@@ -182,7 +202,7 @@ def require_rate_limit(f: Callable) -> Callable:
     def decorated(*args, **kwargs):
         client_id = get_client_id()
         if not rate_limiter.is_allowed(client_id):
-            logger.warning(f"Rate limit exceeded for {client_id}")
+            logger.warning(f"Rate limit exceeded for {client_id!r}")
             return jsonify({'error': 'Rate limit exceeded'}), 429
         return f(*args, **kwargs)
 
@@ -219,6 +239,16 @@ def init_default_token() -> str:
     env_token = os.environ.get('LIDAR_API_TOKEN')
 
     if env_token:
+        # Reject weak operator-supplied tokens: SHA-256 storage is only safe
+        # because auto-generated tokens carry 256 bits of entropy; a short
+        # LIDAR_API_TOKEN is brute-forceable (Blind Spot Audit R2 domain 18
+        # #15).
+        if len(env_token) < 16:
+            raise ValueError(
+                "LIDAR_API_TOKEN is too short (min 16 chars); use a strong "
+                "random value, e.g. `python -c \"import secrets; "
+                "print(secrets.token_urlsafe(32))\"`"
+            )
         token_hash = hash_token(env_token)
         API_TOKENS[token_hash] = {
             'name': 'env_default',
@@ -237,8 +267,15 @@ def init_default_token() -> str:
         'permissions': ['all']
     }
 
-    logger.info(f"Generated API token: {token}")
-    logger.info("Set LIDAR_API_TOKEN environment variable to use a persistent token")
+    # Never persist the live credential to the log file (which lives in the
+    # persisted data volume). Log only a short fingerprint of the hash;
+    # print the full token to stdout once for the operator to copy (domain
+    # 18 #8).
+    logger.info(f"Generated API token (fingerprint {token_hash[:8]}); "
+                f"printed to stdout once")
+    print(f"\n[BLSNS] Generated API token: {token}\n"
+          f"[BLSNS] Set LIDAR_API_TOKEN to persist it across restarts.\n",
+          flush=True)
 
     return token
 

@@ -29,7 +29,7 @@ Backlog содержит 4 категории работ:
 
 ## Section 1: Blind Spot Audit Round 2
 
-**Status**: PLANNING  
+**Status**: IN PROGRESS — domains 15–19 audited (see `BLIND_SPOT_AUDIT_R2_FINDINGS.md`): 44 findings, 12 mechanical fixes applied + committed, remainder logged as NEEDS-DECISION. Domains 20–24 still pending.  
 **Specialist Domains Completed (14/24)**:
 - ✅ Security (OWASP, injection, auth)
 - ✅ Reliability (error handling, fault tolerance)

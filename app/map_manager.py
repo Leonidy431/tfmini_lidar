@@ -22,6 +22,33 @@ from app.security import safe_join, validate_path_component
 logger = logging.getLogger(__name__)
 
 
+def _fsync_path(path: str):
+    """Flush a file's contents to disk. Best-effort: a platform without
+    fsync semantics must not break the save."""
+    try:
+        fd = os.open(path, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError as e:
+        logger.debug(f"fsync of {path} skipped: {e}")
+
+
+def _fsync_dir(dirpath: str):
+    """Flush a directory entry so a rename/create is durable across power
+    loss (ext4 can otherwise lose the rename itself). Blind Spot Audit R2
+    domain 17 #2."""
+    try:
+        fd = os.open(dirpath, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError as e:
+        logger.debug(f"fsync of dir {dirpath} skipped: {e}")
+
+
 @dataclass
 class MapMetadata:
     """Map metadata"""
@@ -123,27 +150,39 @@ class MapManager:
             logger.error(f"Invalid map name: {name}")
             return False
 
+        # Build the whole map in a staging directory, fsync every file, then
+        # atomically swap it into place (Blind Spot Audit R2 domain 17 #1/#2/
+        # #6). On an ROV, power loss is routine; the previous good map must
+        # survive a save that is cut off partway, and a half-written map must
+        # never appear in list_maps().
+        staging_dir = None
         try:
-            # Create map directory with path traversal protection
             map_dir = safe_join(self.maps_dir, name)
             if map_dir is None:
                 logger.error(f"Path traversal blocked for map: {name}")
                 return False
-            os.makedirs(map_dir, exist_ok=True)
 
-            # Save points
-            points_file = self._save_points(map_dir, points, format)
+            staging_dir = map_dir + '.staging'
+            if os.path.exists(staging_dir):
+                shutil.rmtree(staging_dir)
+            os.makedirs(staging_dir)
+
+            # Save points; abort the whole save if the point-cloud write
+            # fails, so metadata never claims points that aren't on disk
+            # (domain 17 #3).
+            points_file = self._save_points(staging_dir, points, format)
             if not points_file:
                 return False
 
-            # Save trajectory if provided
             trajectory_count = 0
             if trajectory is not None and len(trajectory) > 0:
-                traj_file = os.path.join(map_dir, 'trajectory.npy')
-                np.save(traj_file, trajectory)
+                traj_file = os.path.join(staging_dir, 'trajectory.npy')
+                with open(traj_file, 'wb') as f:
+                    np.save(f, trajectory)
+                    f.flush()
+                    os.fsync(f.fileno())
                 trajectory_count = len(trajectory)
 
-            # Create and save metadata
             metadata = MapMetadata(
                 name=name,
                 created=datetime.now(),
@@ -158,9 +197,22 @@ class MapManager:
                 total_scans=total_scans
             )
 
-            metadata_file = os.path.join(map_dir, 'metadata.json')
+            metadata_file = os.path.join(staging_dir, 'metadata.json')
             with open(metadata_file, 'w') as f:
                 json.dump(metadata.to_dict(), f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+
+            _fsync_dir(staging_dir)
+
+            # Atomic swap: remove any prior map only once the new one is fully
+            # written and fsynced. A power cut before this point leaves the old
+            # map untouched and only an orphan .staging dir (cleaned below).
+            if os.path.exists(map_dir):
+                shutil.rmtree(map_dir)
+            os.replace(staging_dir, map_dir)
+            staging_dir = None
+            _fsync_dir(self.maps_dir)
 
             logger.info(f"Map '{name}' saved ({len(points)} points, format: {format})")
             return True
@@ -168,31 +220,47 @@ class MapManager:
         except Exception as e:
             logger.error(f"Failed to save map: {e}")
             return False
+        finally:
+            if staging_dir is not None and os.path.exists(staging_dir):
+                shutil.rmtree(staging_dir, ignore_errors=True)
 
     def _save_points(self, map_dir: str, points: np.ndarray, format: str) -> Optional[str]:
-        """Save points in specified format"""
-        try:
-            if format == 'ply':
-                filepath = os.path.join(map_dir, 'points.ply')
-                pcd = o3d.geometry.PointCloud()
-                pcd.points = o3d.utility.Vector3dVector(points)
-                o3d.io.write_point_cloud(filepath, pcd)
+        """Save points in the given format via a temp file + atomic rename.
 
-            elif format == 'pcd':
-                filepath = os.path.join(map_dir, 'points.pcd')
+        Each format writes to a hidden temp file that keeps the real
+        extension (so Open3D can still infer the format), fsyncs it, then
+        os.replace()s it into place. Returns the final path, or None if the
+        underlying writer reported/raised a failure (Blind Spot Audit R2
+        domain 17 #1/#3)."""
+        try:
+            if format in ('ply', 'pcd'):
+                filepath = os.path.join(map_dir, f'points.{format}')
+                tmp = os.path.join(map_dir, f'.points.tmp.{format}')
                 pcd = o3d.geometry.PointCloud()
                 pcd.points = o3d.utility.Vector3dVector(points)
-                o3d.io.write_point_cloud(filepath, pcd)
+                if not o3d.io.write_point_cloud(tmp, pcd):
+                    logger.error(f"Open3D failed to write {format} point cloud")
+                    return None
 
             elif format == 'npy':
                 filepath = os.path.join(map_dir, 'points.npy')
-                np.save(filepath, points)
+                tmp = os.path.join(map_dir, '.points.tmp.npy')
+                with open(tmp, 'wb') as f:
+                    np.save(f, points)
+                    f.flush()
+                    os.fsync(f.fileno())
 
             elif format == 'h5':
                 filepath = os.path.join(map_dir, 'points.h5')
-                with h5py.File(filepath, 'w') as f:
+                tmp = os.path.join(map_dir, '.points.tmp.h5')
+                with h5py.File(tmp, 'w') as f:
                     f.create_dataset('points', data=points, compression='gzip')
+            else:
+                logger.error(f"Unsupported format in _save_points: {format}")
+                return None
 
+            _fsync_path(tmp)
+            os.replace(tmp, filepath)
             return filepath
 
         except Exception as e:
@@ -220,17 +288,44 @@ class MapManager:
                 logger.error(f"Map '{name}' not found")
                 return None
 
-            # Load metadata
+            # Load metadata. A corrupt/half-written metadata.json (routine
+            # after power loss) must not make an otherwise-intact points file
+            # unloadable -- fall through to synthesized metadata instead
+            # (Blind Spot Audit R2 domain 17 #5).
             metadata_file = os.path.join(map_dir, 'metadata.json')
+            metadata = None
             if os.path.exists(metadata_file):
-                with open(metadata_file, 'r') as f:
-                    metadata = MapMetadata.from_dict(json.load(f))
-            else:
+                try:
+                    with open(metadata_file, 'r') as f:
+                        metadata = MapMetadata.from_dict(json.load(f))
+                except (json.JSONDecodeError, KeyError, ValueError, OSError) as e:
+                    logger.warning(f"Map '{name}' metadata unreadable ({e}); "
+                                   f"synthesizing from directory")
+            metadata_synthesized = metadata is None
+            if metadata_synthesized:
                 metadata = MapMetadata(name=name, created=datetime.now())
 
-            # Load points
-            points = self._load_points(map_dir, metadata.format)
+            # Load points. When metadata was synthesized we don't know the
+            # real format, so try all of them rather than trusting the
+            # placeholder default (domain 17 #5 -- an npy map with a corrupt
+            # metadata.json must still load).
+            points = self._load_points(
+                map_dir, None if metadata_synthesized else metadata.format)
             if points is None:
+                return None
+
+            # Validate geometry before handing the map to localization: a
+            # truncated point file loads as an empty/partial or wrong-shape
+            # array without raising, and navigating against a phantom map is
+            # worse than reporting a load failure (domain 17 #4).
+            if points.ndim != 2 or points.shape[1] != 3:
+                logger.error(f"Map '{name}' points have invalid shape "
+                             f"{points.shape}; refusing to load")
+                return None
+            if metadata.point_count > 0 and len(points) < metadata.point_count * 0.5:
+                logger.error(f"Map '{name}' has {len(points)} points but "
+                             f"metadata claims {metadata.point_count}; likely "
+                             f"truncated, refusing to load")
                 return None
 
             logger.info(f"Map '{name}' loaded ({len(points)} points)")
@@ -299,30 +394,42 @@ class MapManager:
         maps = []
 
         try:
-            for map_name in os.listdir(self.maps_dir):
-                map_dir = os.path.join(self.maps_dir, map_name)
+            entries = os.listdir(self.maps_dir)
+        except OSError as e:
+            logger.error(f"Failed to list maps: {e}")
+            return maps
 
-                if not os.path.isdir(map_dir):
-                    continue
+        for map_name in entries:
+            # Skip staging/temp directories left by an interrupted save so a
+            # half-written map is never advertised as loadable (Blind Spot
+            # Audit R2 domain 17 #6).
+            if map_name.endswith('.staging'):
+                continue
+            map_dir = os.path.join(self.maps_dir, map_name)
+            if not os.path.isdir(map_dir):
+                continue
 
+            # Per-entry error isolation: one corrupt metadata.json must not
+            # blank the entire listing and hide every healthy map after it
+            # (domain 17 #8).
+            try:
                 metadata_file = os.path.join(map_dir, 'metadata.json')
-
                 if os.path.exists(metadata_file):
                     with open(metadata_file, 'r') as f:
                         maps.append(json.load(f))
                 else:
-                    # Create basic metadata from directory
                     maps.append({
                         'name': map_name,
                         'created': datetime.fromtimestamp(
                             os.path.getctime(map_dir)
                         ).isoformat(),
                         'point_count': 0,
-                        'description': ''
+                        'description': '',
+                        'status': 'incomplete'
                     })
-
-        except Exception as e:
-            logger.error(f"Failed to list maps: {e}")
+            except (json.JSONDecodeError, OSError) as e:
+                logger.warning(f"Skipping unreadable map '{map_name}': {e}")
+                continue
 
         return sorted(maps, key=lambda x: x.get('created', ''), reverse=True)
 

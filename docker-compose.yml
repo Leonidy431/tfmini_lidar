@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   blueos-lidar-slam:
     build: .
@@ -9,9 +7,11 @@ services:
     # No privileged mode; grant only the capability needed for raw serial I/O.
     cap_add:
       - SYS_RAWIO
+    # host networking is required for BlueOS mDNS/service discovery. Under
+    # host mode explicit `ports:` are meaningless (Compose discards them with
+    # a warning), so they're intentionally omitted -- the app binds WEB_PORT
+    # directly on the host (Blind Spot Audit R2 domain 15 #11).
     network_mode: host
-    ports:
-      - "5000:5000"
     volumes:
       # Named data volume instead of a broad bind mount (Volume Security #7)
       - lidar-data:/app/data

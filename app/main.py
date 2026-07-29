@@ -5,6 +5,7 @@ Integrates all modules and provides REST API for web interface.
 """
 
 import logging
+import logging.handlers
 import os
 import queue
 import threading
@@ -43,7 +44,12 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(f"{Config.LOGS_DIR}/app.log")
+        # Rotating handler so app.log can't fill the (often small, bind-
+        # mounted) data volume over a long deployment and thereby make every
+        # map/profile save fail (Blind Spot Audit R2 domain 17 #10 / 18 #9).
+        logging.handlers.RotatingFileHandler(
+            f"{Config.LOGS_DIR}/app.log", maxBytes=10 * 1024 * 1024, backupCount=3
+        )
     ]
 )
 logger = logging.getLogger(__name__)
@@ -716,9 +722,17 @@ app = Flask(__name__,
            template_folder='web/templates',
            static_folder='web/static')
 
-# Restricted CORS - only allow same-origin and BlueOS hosts
-ALLOWED_ORIGINS = os.environ.get('CORS_ORIGINS', 'http://localhost:5000,http://127.0.0.1:5000,http://blueos.local').split(',')
-CORS(app, origins=ALLOWED_ORIGINS, supports_credentials=True)
+# Restricted CORS - only allow same-origin and BlueOS hosts. Strip each
+# entry so `CORS_ORIGINS=a, b` doesn't silently yield a never-matching ' b'
+# origin, and reject a wildcard (which, combined with credentials, would be
+# origin-reflection) (Blind Spot Audit R2 domain 18 #11).
+ALLOWED_ORIGINS = [
+    o.strip() for o in
+    os.environ.get('CORS_ORIGINS',
+                   'http://localhost:5000,http://127.0.0.1:5000,http://blueos.local').split(',')
+    if o.strip() and o.strip() != '*'
+]
+CORS(app, origins=ALLOWED_ORIGINS)
 # async_mode='threading' makes socketio.emit() safe to call from the LiDAR
 # background thread (Concurrency finding #2).
 socketio = SocketIO(app, cors_allowed_origins=ALLOWED_ORIGINS, async_mode='threading')

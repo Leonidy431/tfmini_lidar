@@ -151,9 +151,11 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 # Drop to non-root user
 USER lidar_app
 
-# Expose ports
-EXPOSE 5000      # Flask REST API
-EXPOSE 8000      # Gunicorn WSGI
+# Expose ports (Dockerfile only supports whole-line comments -- an inline
+# comment after EXPOSE is parsed as a port arg and fails the build).
+# 5000 = Flask REST API, 8000 = Gunicorn WSGI.
+EXPOSE 5000
+EXPOSE 8000
 
 # Environment configuration (can be overridden at runtime)
 ENV LIDAR_PORT="/dev/ttyUSB0" \
