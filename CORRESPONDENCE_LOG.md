@@ -121,6 +121,23 @@
 
 ---
 
+## Entry 10: PR text + "го" on P9 field-validation line
+
+**User ask**: Create a PR for the branch (blocked: GitHub App not connected for this session — PR title/body provided for manual copy-paste instead, compare link `main...claude/physics-engineering-audit`). Then, quoting the PR checklist line "Field validation (P9) pending hardware access", the user said "го" (go) — proceed with P9.
+
+**Outcome**: Hardware is unavailable in this environment, but TECHNICAL_SPECIFICATION.md defines P9 as "Empirical tuning on ROV hardware **or validated simulation**" — so the simulation half of P9 was executed against the ground-truth physics model in `tests/emulation_server.py`:
+
+- **New suite** `tests/test_p9_simulation.py` (9 tests): D3 depth-calibration recovery (exact, < 1e-6 residual; fitted n(z) beats constant-n), D4 oven-procedure slope recovery (0.02 mm residual), D2 detection/false-positive rates at 3 NTU (100% / 0%), D8 trajectory fusion (49.5% position RMSE improvement; attitude q-tuning lever measured at 49.7%), D1 pitched-beam geometry (closed-form exact; 1D-projection error quantified at 52% of range at 30° pitch)
+- **Report**: `docs/P9_SIMULATION_VALIDATION.md` with all measured numbers and acceptance thresholds
+- **2 real defects found and fixed in `app/multipath_detector.py`** (the campaign doing its job):
+  1. Median-split EM initialization converged to a local optimum splitting the direct-path cluster when the scattered cluster is a small minority → 16.5% false positives. Fixed: 10th/90th-percentile initialization, n_iter 10→25.
+  2. No unimodality guard: a degenerate 2-component split of a single cluster could flag legitimate readings. Fixed: Ashman's D > 2 bimodality requirement before flagging.
+- **1 test-design defect found and fixed in the campaign itself**: the D8 attitude assertion originally compared 3-axis fused RMSE against per-axis measurement noise (apples to oranges); the measured value actually matched steady-state Kalman theory exactly. Rewritten as like-for-like raw-vs-fused, plus a separate tuned-q demonstration.
+- Phase tables in TECHNICAL_SPECIFICATION.md updated: P9 column now "✅ sim / ⏳ field" for D1-D4/D8; D8's P8 column partially closed (tuning guidance measured)
+- Full suite: **267/267 passing**, stable across repeated runs
+
+---
+
 ## Backlog Integration
 
 The items in this log map onto `DEVELOPMENT_BACKLOG.md` Sprint 1 tasks as follows:

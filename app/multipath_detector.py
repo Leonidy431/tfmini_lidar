@@ -38,7 +38,7 @@ def _gaussian_pdf(x: np.ndarray, mean: float, std: float) -> np.ndarray:
     return (1.0 / (std * math.sqrt(2 * math.pi))) * np.exp(-0.5 * ((x - mean) / std) ** 2)
 
 
-def fit_two_component_gmm(samples: np.ndarray, n_iter: int = 10,
+def fit_two_component_gmm(samples: np.ndarray, n_iter: int = 25,
                            eps: float = 1e-6) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """2-component 1D Gaussian mixture via Expectation-Maximization.
 
@@ -52,15 +52,17 @@ def fit_two_component_gmm(samples: np.ndarray, n_iter: int = 10,
         m = float(x[0]) if n else 0.0
         return np.array([m, m]), np.array([1.0, 1.0]), np.array([0.5, 0.5])
 
-    median = np.median(x)
-    lower = x[x <= median]
-    upper = x[x > median]
-    means = np.array([
-        lower.mean() if len(lower) else median - 1.0,
-        upper.mean() if len(upper) else median + 1.0,
-    ])
+    # Initialize means at the 10th/90th percentiles, NOT a median split.
+    # P9-sim finding: median-split initialization converges to a local
+    # optimum that splits the majority (direct-path) cluster in two when
+    # the scattered cluster is a small minority far from it, driving
+    # false positives on direct readings (see tests/test_p9_simulation.py
+    # TestD2MultipathRatesSim and docs/P9_SIMULATION_VALIDATION.md).
+    means = np.array([np.percentile(x, 10), np.percentile(x, 90)])
+    if means[1] - means[0] < eps:
+        means = np.array([means[0] - eps, means[1] + eps])
     global_std = max(float(x.std()), eps)
-    stds = np.array([global_std, global_std])
+    stds = np.array([global_std / 2.0, global_std / 2.0])
     weights = np.array([0.5, 0.5])
 
     for _ in range(n_iter):
@@ -142,8 +144,19 @@ class MultipathDetector:
         total = p_scattered + p_direct
         posterior_scattered = p_scattered / total if total > 1e-12 else 0.0
 
+        # Bimodality guard (Ashman's D): if the two fitted components are
+        # not clearly separated (D < 2), the window is effectively
+        # unimodal -- there is no scattered-light population to reject, and
+        # flagging against a degenerate split of the single direct-path
+        # cluster produces false positives (P9-sim finding, see
+        # docs/P9_SIMULATION_VALIDATION.md).
+        ashman_d = (math.sqrt(2.0) * (self._means[1] - self._means[0])
+                    / math.sqrt(self._stds[0] ** 2 + self._stds[1] ** 2 + 1e-12))
+        bimodal = ashman_d > 2.0
+
         is_multipath = (
-            posterior_scattered > self.posterior_threshold
+            bimodal
+            and posterior_scattered > self.posterior_threshold
             and distance_m < self._means[1]
             and signal_strength < self.signal_strength_threshold
         )

@@ -19,16 +19,18 @@
 
 | Decision | P1-P6 | P7 (код) | P8 Ablation | P9 Calibration | P10 Integration | P11 Validation | P12 Docs | Статус |
 |----------|-------|----------|-------------|-----------------|------------------|-----------------|----------|--------|
-| **D1** MAVLink 3D Attitude | ✅ Done | ✅ `app/mavlink_imu.py` | ⏳ | ⏳ Нужны полевые данные | ✅ `app/main.py::_project_beam` + `Config.mavlink_attitude` | ✅ 20+15 тестов | ✅ Этот файл + decision log | **P7-P11 done, P9 blocked on hardware** |
-| **D2** Multipath Detection | ✅ Done | ✅ `app/multipath_detector.py` | ⏳ | ⏳ Нужна мутномерная калибровка | ✅ `app/main.py::_on_lidar_reading` + `Config.multipath` | ✅ 11+2 тестов | ✅ Этот файл + decision log | **P7-P11 done, P9 blocked on hardware** |
-| **D3** Depth-Dependent n(z) | ✅ Done | ✅ `app/environmental_correction.py::DepthCorrectedRefractive` | ✅ `calibrate_depth_model()` (polyfit) | ⏳ Нужны погружения на глубину | ✅ `app/main.py::_apply_environmental_correction` + `Config.environmental_correction` | ✅ 16+3 тестов | ✅ Этот файл + decision log | **P7-P11 done, P9 blocked on hardware** |
-| **D4** Temperature Compensation | ✅ Done | ✅ `app/environmental_correction.py::TemperatureCorrection` | ⏳ | ⏳ Нужна калибровка в печи | ✅ (в составе D3-модуля) | ✅ (в составе D3-тестов) | ✅ Этот файл + decision log | **P7-P11 done, P9 blocked on hardware** |
+| **D1** MAVLink 3D Attitude | ✅ Done | ✅ `app/mavlink_imu.py` | ⏳ | ✅ sim / ⏳ field | ✅ `app/main.py::_project_beam` + `Config.mavlink_attitude` | ✅ 20+15 тестов | ✅ Этот файл + decision log | **P7-P11 done, P9-sim done (52%-of-range error quantified), field pending** |
+| **D2** Multipath Detection | ✅ Done | ✅ `app/multipath_detector.py` | ⏳ | ✅ sim / ⏳ field | ✅ `app/main.py::_on_lidar_reading` + `Config.multipath` | ✅ 11+2 тестов | ✅ Этот файл + decision log | **P7-P11 done, P9-sim done (100% det / 0% FP @ 3 NTU, 2 fixes found+applied), field pending** |
+| **D3** Depth-Dependent n(z) | ✅ Done | ✅ `app/environmental_correction.py::DepthCorrectedRefractive` | ✅ `calibrate_depth_model()` (polyfit) | ✅ sim / ⏳ field | ✅ `app/main.py::_apply_environmental_correction` + `Config.environmental_correction` | ✅ 16+3 тестов | ✅ Этот файл + decision log | **P7-P11 done, P9-sim done (calibration recovers truth exactly), field pending** |
+| **D4** Temperature Compensation | ✅ Done | ✅ `app/environmental_correction.py::TemperatureCorrection` | ⏳ | ✅ sim / ⏳ field | ✅ (в составе D3-модуля) | ✅ (в составе D3-тестов) | ✅ Этот файл + decision log | **P7-P11 done, P9-sim done (oven procedure validated, 0.02mm residual), field pending** |
 | **D5** Vibration Filtering | ✅ Done | ❌ Не реализовано | ❌ | ❌ | ❌ | ❌ | ✅ Этот файл | **Backlog (LOW priority)** |
 | **D6** Velocity Profile Modeling | ✅ Done | ❌ Не реализовано | ❌ | ❌ | ❌ | ❌ | ✅ Этот файл | **Backlog (LOW priority)** |
 | **D7** Viscosity Tuning | ✅ Done | ❌ Не реализовано | ❌ | ❌ | ❌ | ❌ | ✅ Этот файл | **Backlog (LOW priority)** |
-| **D8** 3D-Attitude EKF | ✅ Done | ✅ `app/ekf_3d_attitude.py` | ⏳ | ⏳ Нужны эталонные траектории | ✅ `app/main.py::_update_ekf` + `Config.ekf` | ✅ 21+3 тестов | ✅ Этот файл + decision log | **P7-P11 done, P9 blocked on hardware** |
+| **D8** 3D-Attitude EKF | ✅ Done | ✅ `app/ekf_3d_attitude.py` | ✅ sim (q-tuning guidance) | ✅ sim / ⏳ field | ✅ `app/main.py::_update_ekf` + `Config.ekf` | ✅ 21+3 тестов | ✅ Этот файл + decision log | **P7-P11 done, P9-sim done (49.5% position RMSE improvement), field pending** |
 
-**Легенда**: ✅ done · ⏳ blocked on hardware/field data (P9 требует физических измерений, которые нельзя подделать в CI) · ❌ not started
+**Легенда**: ✅ done · ✅ sim / ⏳ field — симуляционная часть P9 выполнена против ground-truth модели эмулятора (`docs/P9_SIMULATION_VALIDATION.md`), полевая часть требует физического железа · ⏳ blocked on hardware/field data · ❌ not started
+
+**P9-sim campaign** (`tests/test_p9_simulation.py`, 9 тестов): ТЗ определяет P9 как "ROV hardware **or validated simulation**" — симуляционная половина выполнена, измеренные числа в `docs/P9_SIMULATION_VALIDATION.md`. Кампания нашла и закрыла 2 реальных дефекта в D2 (EM-инициализация по медиане → расщепление прямого кластера → 16.5% ложных срабатываний; исправлено перцентильной инициализацией + защитой по критерию Ашмана D>2) и дала измеренную P8-рекомендацию для D8 (`EKF_PROCESS_NOISE_ATTITUDE`: 0.05 для манёвров, ~0.001 для station-keeping → 49.7% сглаживание). Итог: **267/267 тестов**.
 
 **Итог кодинг-сессии**:
 - Новый код: `app/mavlink_imu.py`, `app/multipath_detector.py`, `app/environmental_correction.py`, `app/ekf_3d_attitude.py` (4 модуля)
