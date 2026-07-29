@@ -30,6 +30,12 @@ from app.security import (
     require_auth, require_rate_limit, init_default_token,
     is_public_route, validate_path_component, validate_token
 )
+from app.mavlink_imu import MAVLinkAttitudeReader, euler_to_quaternion, quaternion_to_rotation_matrix
+from app.multipath_detector import MultipathDetector
+from app.environmental_correction import (
+    EnvironmentalCorrector, DepthCorrectedRefractive, TemperatureCorrection
+)
+from app.ekf_3d_attitude import EKF3DAttitude
 
 # Configure logging
 logging.basicConfig(
@@ -82,6 +88,51 @@ class LiDARSLAMApplication:
             max_range=self.config.lidar.max_range,
             min_range=self.config.lidar.min_range
         )
+
+        # Deferred decisions D1/D2/D3-D4/D8 (PHYSICS_AUDIT.md, TECHNICAL_
+        # SPECIFICATION.md): all default OFF via Config env flags, so a
+        # default build's behavior and the 175-test physics-audit baseline
+        # are unchanged. Each degrades gracefully to the prior behavior
+        # when disabled or when its data source goes stale/unavailable.
+        self.mavlink_attitude: Optional[MAVLinkAttitudeReader] = None
+        if self.config.mavlink_attitude.enabled:
+            self.mavlink_attitude = MAVLinkAttitudeReader(
+                connection_string=self.config.mavlink_attitude.connection_string,
+                baudrate=self.config.mavlink_attitude.baudrate,
+                timeout_s=self.config.mavlink_attitude.timeout_s
+            )
+
+        self.multipath_detector: Optional[MultipathDetector] = None
+        if self.config.multipath.enabled:
+            self.multipath_detector = MultipathDetector(
+                window_size=self.config.multipath.window_size,
+                min_samples=self.config.multipath.min_samples,
+                signal_strength_threshold=self.config.multipath.signal_strength_threshold
+            )
+        self._multipath_rejected_count = 0
+
+        self.environmental_corrector: Optional[EnvironmentalCorrector] = None
+        if self.config.environmental_correction.enabled:
+            ec = self.config.environmental_correction
+            self.environmental_corrector = EnvironmentalCorrector(
+                depth_model=DepthCorrectedRefractive(
+                    a=ec.depth_coeff_a, b=ec.depth_coeff_b, c=ec.depth_coeff_c),
+                temp_model=TemperatureCorrection(
+                    ref_temp_c=ec.temperature_ref_c,
+                    slope_per_degree=ec.temperature_slope_per_degree)
+            )
+        self.current_depth_m: Optional[float] = None  # set by set_depth() when a depth sensor is present
+
+        self.ekf: Optional[EKF3DAttitude] = None
+        if self.config.ekf.enabled:
+            self.ekf = EKF3DAttitude(
+                process_noise_position=self.config.ekf.process_noise_position,
+                process_noise_attitude=self.config.ekf.process_noise_attitude,
+                process_noise_velocity=self.config.ekf.process_noise_velocity,
+                measurement_noise_position=self.config.ekf.measurement_noise_position,
+                measurement_noise_attitude=self.config.ekf.measurement_noise_attitude
+            )
+        self._ekf_last_predict_mono: Optional[float] = None
 
         # Thread safety locks
         self._state_lock = threading.RLock()
@@ -323,6 +374,16 @@ class LiDARSLAMApplication:
             logger.debug(f"Reading rejected ({quality.reason}): {reading.distance}m")
             return
 
+        # Physics Audit D2: reject scattered-light/multipath returns in
+        # turbid water before they reach SLAM. Disabled by default
+        # (Config.multipath.enabled); a no-op deque append during warm-up.
+        if self.multipath_detector is not None:
+            verdict = self.multipath_detector.check(reading.distance, reading.signal_strength)
+            if verdict.is_multipath:
+                self._multipath_rejected_count += 1
+                logger.debug(f"Reading rejected (multipath): {reading.distance}m")
+                return
+
         with self._reading_lock:
             self.last_reading = reading
             self._reading_count += 1
@@ -353,26 +414,27 @@ class LiDARSLAMApplication:
 
     def _process_reading(self, reading: LiDARReading):
         """Heavy processing pipeline, runs on the worker thread."""
-        # Convert distance to 3D point (assuming forward-facing sensor).
-        # Full attitude (pitch/roll) is not fused -- see PHYSICS_AUDIT.md D2;
-        # this remains a yaw-only projection until a real attitude source
-        # (MAVLink ATTITUDE) is wired in (D1).
-        d = reading.distance
+        # Physics Audit D3/D4: optionally re-scale the driver's constant-n
+        # corrected distance with depth-dependent refractive index and/or
+        # temperature compensation. No-op (returns reading.distance
+        # unchanged) unless Config.environmental_correction.enabled and a
+        # depth reading has been supplied via set_depth().
+        d = self._apply_environmental_correction(reading)
 
         # Get current position estimate
         position = self._get_current_position()
 
-        # World frame is ENU (x=East, y=North, z=Up). current_heading is a
-        # COMPASS heading in degrees, clockwise-positive from North -- the
-        # opposite handedness of the math convention (CCW-positive from
-        # +X). Using cos()->x / sin()->y directly (as before) silently
-        # mirrors the reconstructed geometry about the NE diagonal (Physics
-        # Audit C4). Converting explicitly here keeps the single point of
-        # truth for the heading convention in one place.
-        heading_rad = np.radians(self.current_heading)
-        world_x = position[0] + d * np.sin(heading_rad)
-        world_y = position[1] + d * np.cos(heading_rad)
-        world_z = position[2]
+        # World frame is ENU (x=East, y=North, z=Up). Projects the beam
+        # using full roll/pitch/yaw when a fresh MAVLink attitude sample is
+        # available (Physics Audit D1); otherwise falls back to the
+        # existing yaw-only projection (Physics Audit C4).
+        world_x, world_y, world_z = self._project_beam(d, position)
+
+        # Physics Audit D8: fuse the projected point + attitude into the
+        # 9-DOF EKF when enabled. Purely additive -- does not change
+        # world_x/world_y/world_z above, which the rest of the pipeline
+        # (SLAM/localization/recording) continues to consume unchanged.
+        self._update_ekf(reading, world_x, world_y, world_z)
 
         # Process based on mode
         if self.mode == self.MODE_MAPPING:
@@ -422,6 +484,80 @@ class LiDARSLAMApplication:
 
         # Broadcast reading via WebSocket
         self._broadcast_reading(reading)
+
+    def _apply_environmental_correction(self, reading: LiDARReading) -> float:
+        """Physics Audit D3/D4: re-scale the driver's constant-n corrected
+        distance with depth-dependent refractive index and/or temperature
+        compensation. Returns reading.distance unchanged unless enabled AND
+        at least one of (current_depth_m, reading.temperature with
+        temperature_enabled) is available -- see EnvironmentalCorrector."""
+        if self.environmental_corrector is None:
+            return reading.distance
+
+        ec_config = self.config.environmental_correction
+        temperature_c = reading.temperature if ec_config.temperature_enabled else None
+        if self.current_depth_m is None and temperature_c is None:
+            return reading.distance
+
+        return self.environmental_corrector.rescale_corrected_distance(
+            reading.distance,
+            applied_n=self.config.lidar.medium_refractive_index,
+            depth_m=self.current_depth_m,
+            temperature_c=temperature_c
+        )
+
+    def _project_beam(self, distance: float, position: tuple) -> tuple:
+        """Returns (world_x, world_y, world_z) in ENU. Uses full 3D
+        attitude (roll/pitch/yaw) when a fresh MAVLink sample is available
+        (Physics Audit D1); otherwise falls back to the existing yaw-only
+        projection (Physics Audit C4) -- identical output to before this
+        module existed when self.mavlink_attitude is None/stale."""
+        attitude = self.mavlink_attitude.get_attitude() if self.mavlink_attitude else None
+        if attitude is not None:
+            dx_east, dy_north, dz_up = self._compute_3d_beam_offset(
+                distance, attitude.roll, attitude.pitch, attitude.yaw)
+        else:
+            heading_rad = np.radians(self.current_heading)
+            dx_east = distance * np.sin(heading_rad)
+            dy_north = distance * np.cos(heading_rad)
+            dz_up = 0.0
+        return (position[0] + dx_east, position[1] + dy_north, position[2] + dz_up)
+
+    @staticmethod
+    def _compute_3d_beam_offset(distance: float, roll: float, pitch: float,
+                                 yaw_compass_rad: float) -> tuple:
+        """roll/pitch/yaw in radians, NED convention (yaw clockwise-
+        positive from North -- matching self.current_heading and
+        MAVLink's own ATTITUDE.yaw field). Returns (dx_east, dy_north,
+        dz_up) in the app's ENU world frame.
+
+        Verified to reduce EXACTLY to the existing d*sin(yaw)/d*cos(yaw)
+        formula at roll=pitch=0 (tests/test_main_physics.py::
+        TestBeam3DProjection::test_reduces_to_1d_formula_at_zero_roll_pitch):
+        NED body-forward [1,0,0] rotated by compass yaw psi gives
+        (north=cos(psi), east=sin(psi), down=0) -> ENU (sin(psi), cos(psi), 0).
+        """
+        qx, qy, qz, qw = euler_to_quaternion(roll, pitch, yaw_compass_rad)
+        r_ned = quaternion_to_rotation_matrix(qx, qy, qz, qw)
+        offset_ned = r_ned @ np.array([distance, 0.0, 0.0])
+        north, east, down = offset_ned[0], offset_ned[1], offset_ned[2]
+        return (east, north, -down)
+
+    def _update_ekf(self, reading: LiDARReading, world_x: float, world_y: float, world_z: float):
+        """Physics Audit D8: fuse the projected position (+ attitude, if
+        available) into the 9-DOF EKF. No-op unless Config.ekf.enabled."""
+        if self.ekf is None:
+            return
+        now_mono = reading.mono_timestamp if reading.mono_timestamp is not None else time.monotonic()
+        if self._ekf_last_predict_mono is not None:
+            self.ekf.predict(now_mono - self._ekf_last_predict_mono)
+        self._ekf_last_predict_mono = now_mono
+
+        self.ekf.update_position([world_x, world_y, world_z])
+
+        attitude = self.mavlink_attitude.get_attitude() if self.mavlink_attitude else None
+        if attitude is not None:
+            self.ekf.update_attitude(attitude.roll, attitude.pitch, attitude.yaw)
 
     def _get_current_position(self) -> tuple:
         """Get current position estimate"""
@@ -511,19 +647,37 @@ class LiDARSLAMApplication:
             'error_rate': round(error_rate, 4),
             'data_quality_score': dq,
             'heading_source_active': self.heading_ever_set,
-            'last_error': lidar_stats.get('last_error') if self.driver else None
+            'last_error': lidar_stats.get('last_error') if self.driver else None,
+            # Deferred-decision status (Config default: all disabled, so
+            # these are None/0 on an unmodified build -- Physics Audit
+            # D1/D2/D3-D4/D8).
+            'attitude_3d_active': (
+                self.mavlink_attitude.get_attitude() is not None
+                if self.mavlink_attitude else False
+            ),
+            'multipath_rejected_count': self._multipath_rejected_count,
+            'ekf_fusion_active': self.ekf is not None,
         }
 
     def set_heading(self, heading_deg: float):
         """Update the compass heading (degrees, clockwise-positive from
-        North). Extension point for a future attitude source (MAVLink
-        ATTITUDE/VFR_HUD, see PHYSICS_AUDIT.md D1) -- not called anywhere
-        in this build, so heading_ever_set stays honestly False until one
-        is wired in."""
+        North). Extension point for a heading-only attitude source. When
+        Config.mavlink_attitude.enabled and a fresh 3D sample is available,
+        _project_beam() uses the full MAVLink attitude instead and this
+        value is only used as the D1 fallback (Physics Audit C4)."""
         with self._state_lock:
             self.current_heading = heading_deg % 360.0
             self.heading_ever_set = True
             self.heading_last_update = time.time()
+
+    def set_depth(self, depth_m: float):
+        """Update the current depth (meters, positive down) from an
+        external pressure sensor (e.g. MS5837). Feeds the D3 depth-
+        dependent refractive index correction when
+        Config.environmental_correction.enabled; otherwise stored but
+        unused."""
+        with self._state_lock:
+            self.current_depth_m = depth_m
 
     def get_status(self) -> Dict:
         """Get comprehensive application status"""

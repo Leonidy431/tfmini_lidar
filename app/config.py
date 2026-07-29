@@ -108,6 +108,70 @@ class BlueOSConfig:
     send_obstacle_distance: bool = True
 
 
+@dataclass
+class MAVLinkAttitudeConfig:
+    """MAVLink 3D Attitude Configuration (Physics Audit D1).
+
+    Disabled by default: with no flight controller wired up, the app keeps
+    the existing 1D compass-heading-only beam projection (Physics Audit
+    C4). Enabling this lets full roll/pitch/yaw correct the beam
+    projection when the ROV is not level.
+    """
+    enabled: bool = os.getenv("ENABLE_MAVLINK_3D_ATTITUDE", "false").lower() == "true"
+    connection_string: str = os.getenv("MAVLINK_CONNECTION_STRING", "udp:127.0.0.1:14550")
+    baudrate: int = int(os.getenv("MAVLINK_BAUDRATE", "115200"))
+    timeout_s: float = float(os.getenv("MAVLINK_TIMEOUT_S", "1.0"))
+
+
+@dataclass
+class MultipathConfig:
+    """Multipath/Turbidity Detection Configuration (Physics Audit D2).
+
+    Disabled by default: the 2-component mixture model needs a warm-up
+    window of clean readings before it can discriminate scattered-light
+    returns, and is only worth the extra CPU in turbid water.
+    """
+    enabled: bool = os.getenv("ENABLE_MULTIPATH_DETECTION", "false").lower() == "true"
+    window_size: int = int(os.getenv("MULTIPATH_WINDOW_SIZE", "50"))
+    min_samples: int = int(os.getenv("MULTIPATH_MIN_SAMPLES", "20"))
+    signal_strength_threshold: int = int(os.getenv("MULTIPATH_SIGNAL_THRESHOLD", "100"))
+
+
+@dataclass
+class EnvironmentalCorrectionConfig:
+    """Depth-Dependent Refractive Index + Temperature Compensation
+    (Physics Audit D3/D4).
+
+    Disabled by default: default coefficients (b=c=0, no temperature
+    slope disabled) are a strict no-op over the driver's existing
+    constant-n correction (Physics Audit C1) until D3/D4 P9 lab/field
+    calibration provides fitted coefficients for the actual deployment.
+    """
+    enabled: bool = os.getenv("ENABLE_DEPTH_CORRECTION", "false").lower() == "true"
+    depth_coeff_a: float = float(os.getenv("DEPTH_REFRACTIVE_A", "1.333"))
+    depth_coeff_b: float = float(os.getenv("DEPTH_REFRACTIVE_B", "0.0"))
+    depth_coeff_c: float = float(os.getenv("DEPTH_REFRACTIVE_C", "0.0"))
+    temperature_enabled: bool = os.getenv("ENABLE_TEMPERATURE_CORRECTION", "false").lower() == "true"
+    temperature_ref_c: float = float(os.getenv("TEMPERATURE_REF_C", "20.0"))
+    temperature_slope_per_degree: float = float(os.getenv("TEMPERATURE_SLOPE", "0.0005"))
+
+
+@dataclass
+class EKFConfig:
+    """9-DOF Position+Attitude EKF Fusion Configuration (Physics Audit D8).
+
+    Disabled by default; depends on MAVLinkAttitudeConfig for attitude
+    measurements to be useful (position-only fusion still works without
+    it, degrading gracefully to a constant-velocity position filter).
+    """
+    enabled: bool = os.getenv("ENABLE_EKF_FUSION", "false").lower() == "true"
+    process_noise_position: float = float(os.getenv("EKF_PROCESS_NOISE_POSITION", "0.01"))
+    process_noise_attitude: float = float(os.getenv("EKF_PROCESS_NOISE_ATTITUDE", "0.05"))
+    process_noise_velocity: float = float(os.getenv("EKF_PROCESS_NOISE_VELOCITY", "0.1"))
+    measurement_noise_position: float = float(os.getenv("EKF_MEASUREMENT_NOISE_POSITION", "0.15"))
+    measurement_noise_attitude: float = float(os.getenv("EKF_MEASUREMENT_NOISE_ATTITUDE", "0.02"))
+
+
 class Config:
     """Main Configuration Class"""
 
@@ -135,6 +199,10 @@ class Config:
     localization = LocalizationConfig()
     scanner = ScannerConfig()
     blueos = BlueOSConfig()
+    mavlink_attitude = MAVLinkAttitudeConfig()
+    multipath = MultipathConfig()
+    environmental_correction = EnvironmentalCorrectionConfig()
+    ekf = EKFConfig()
 
     @classmethod
     def init_directories(cls):
@@ -177,6 +245,12 @@ class Config:
                 "orbit_radius": cls.scanner.orbit_radius,
                 "angular_resolution_deg": cls.scanner.angular_resolution_deg,
                 "layer_height": cls.scanner.layer_height
+            },
+            "deferred_decisions": {
+                "mavlink_3d_attitude_enabled": cls.mavlink_attitude.enabled,
+                "multipath_detection_enabled": cls.multipath.enabled,
+                "depth_correction_enabled": cls.environmental_correction.enabled,
+                "ekf_fusion_enabled": cls.ekf.enabled
             }
         }
 

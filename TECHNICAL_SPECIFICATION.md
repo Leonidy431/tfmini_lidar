@@ -2,14 +2,48 @@
 
 **Проект**: BlueOS LiDAR SLAM Navigation System (BLSNS)  
 **Статус**: Разработка по HLD Rule 7 (12-фазный процесс)  
-**Дата**: 2024-01-15  
-**Версия**: 1.0
+**Дата**: 2024-01-15 (обновлено: код P7 реализован)  
+**Версия**: 1.1
 
 ---
 
 ## Обзор
 
 ТЗ определяет спецификации для 8 отложенных решений (D1-D8), требующих аппаратных или эмпирических данных. Каждое решение следует процессу Rule 7 (12-фазный HLD) с научной базой.
+
+---
+
+## Статус реализации по фазам (обновление после кодинг-сессии)
+
+Все алгоритмы P7 (Prototyping) реализованы в коде, покрыты юнит- и интеграционными тестами, подключены за feature-флагами (по умолчанию **выключены** — поведение системы не меняется без явного включения). См. `CORRESPONDENCE_LOG.md` за хронологией решений.
+
+| Decision | P1-P6 | P7 (код) | P8 Ablation | P9 Calibration | P10 Integration | P11 Validation | P12 Docs | Статус |
+|----------|-------|----------|-------------|-----------------|------------------|-----------------|----------|--------|
+| **D1** MAVLink 3D Attitude | ✅ Done | ✅ `app/mavlink_imu.py` | ⏳ | ⏳ Нужны полевые данные | ✅ `app/main.py::_project_beam` + `Config.mavlink_attitude` | ✅ 20+15 тестов | ✅ Этот файл + decision log | **P7-P11 done, P9 blocked on hardware** |
+| **D2** Multipath Detection | ✅ Done | ✅ `app/multipath_detector.py` | ⏳ | ⏳ Нужна мутномерная калибровка | ✅ `app/main.py::_on_lidar_reading` + `Config.multipath` | ✅ 11+2 тестов | ✅ Этот файл + decision log | **P7-P11 done, P9 blocked on hardware** |
+| **D3** Depth-Dependent n(z) | ✅ Done | ✅ `app/environmental_correction.py::DepthCorrectedRefractive` | ✅ `calibrate_depth_model()` (polyfit) | ⏳ Нужны погружения на глубину | ✅ `app/main.py::_apply_environmental_correction` + `Config.environmental_correction` | ✅ 16+3 тестов | ✅ Этот файл + decision log | **P7-P11 done, P9 blocked on hardware** |
+| **D4** Temperature Compensation | ✅ Done | ✅ `app/environmental_correction.py::TemperatureCorrection` | ⏳ | ⏳ Нужна калибровка в печи | ✅ (в составе D3-модуля) | ✅ (в составе D3-тестов) | ✅ Этот файл + decision log | **P7-P11 done, P9 blocked on hardware** |
+| **D5** Vibration Filtering | ✅ Done | ❌ Не реализовано | ❌ | ❌ | ❌ | ❌ | ✅ Этот файл | **Backlog (LOW priority)** |
+| **D6** Velocity Profile Modeling | ✅ Done | ❌ Не реализовано | ❌ | ❌ | ❌ | ❌ | ✅ Этот файл | **Backlog (LOW priority)** |
+| **D7** Viscosity Tuning | ✅ Done | ❌ Не реализовано | ❌ | ❌ | ❌ | ❌ | ✅ Этот файл | **Backlog (LOW priority)** |
+| **D8** 3D-Attitude EKF | ✅ Done | ✅ `app/ekf_3d_attitude.py` | ⏳ | ⏳ Нужны эталонные траектории | ✅ `app/main.py::_update_ekf` + `Config.ekf` | ✅ 21+3 тестов | ✅ Этот файл + decision log | **P7-P11 done, P9 blocked on hardware** |
+
+**Легенда**: ✅ done · ⏳ blocked on hardware/field data (P9 требует физических измерений, которые нельзя подделать в CI) · ❌ not started
+
+**Итог кодинг-сессии**:
+- Новый код: `app/mavlink_imu.py`, `app/multipath_detector.py`, `app/environmental_correction.py`, `app/ekf_3d_attitude.py` (4 модуля)
+- Новые тесты: `tests/test_mavlink_imu.py` (20), `tests/test_multipath_detector.py` (11), `tests/test_environmental_correction.py` (16), `tests/test_ekf_3d_attitude.py` (21), `tests/test_deferred_decisions_integration.py` (15) — **83 новых теста**
+- Конфигурация: `MAVLinkAttitudeConfig`, `MultipathConfig`, `EnvironmentalCorrectionConfig`, `EKFConfig` в `app/config.py`, все флаги `ENABLE_*` по умолчанию `false`
+- Интеграция в `app/main.py`: `_project_beam()`, `_apply_environmental_correction()`, `_update_ekf()`, multipath-гейт в `_on_lidar_reading()`, `set_depth()`, расширенный `get_health()`
+- Итоговый прогон: **258/258 тестов проходят** (175 базовых физика-аудит + 83 новых), стабильно на 5 повторных прогонах
+- Обратная совместимость: подтверждена явно — при выключенных флагах (`app.mavlink_attitude is None` и т.д.) поведение идентично состоянию до этой сессии
+
+**Что осталось (P9 Calibration, требует железа)**:
+- D1: полевые погружения с известными углами крена/дифферента для валидации RMSE-улучшения
+- D2: бассейн/танк с регулируемой мутностью для обучения детектора на реальных данных
+- D3: погружения на разные глубины с эталонными маркерами
+- D4: калибровка в термокамере/водяной бане
+- D8: эталонные 6-DOF траектории (motion capture или GPS-buoy reference)
 
 ---
 
