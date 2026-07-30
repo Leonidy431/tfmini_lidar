@@ -67,6 +67,11 @@ class LiDARSLAMApplication:
     - Object detection
     """
 
+    # Health degrades if the sensor is connected but has delivered no frame
+    # for this long (Blind Spot Audit R2 domain 24 #9). Generous relative to
+    # the ~10 Hz frame rate so brief gaps don't flap the health state.
+    STALE_READ_S = 3.0
+
     # Operating modes
     MODE_IDLE = 'idle'
     MODE_MAPPING = 'mapping'
@@ -128,6 +133,7 @@ class LiDARSLAMApplication:
                     slope_per_degree=ec.temperature_slope_per_degree)
             )
         self.current_depth_m: Optional[float] = None  # set by set_depth() when a depth sensor is present
+        self._depth_timestamp: Optional[float] = None  # monotonic time of last set_depth()
 
         self.ekf: Optional[EKF3DAttitude] = None
         if self.config.ekf.enabled:
@@ -502,13 +508,14 @@ class LiDARSLAMApplication:
 
         ec_config = self.config.environmental_correction
         temperature_c = reading.temperature if ec_config.temperature_enabled else None
-        if self.current_depth_m is None and temperature_c is None:
+        depth_m = self._fresh_depth()  # None if the depth sample is stale
+        if depth_m is None and temperature_c is None:
             return reading.distance
 
         return self.environmental_corrector.rescale_corrected_distance(
             reading.distance,
             applied_n=self.config.lidar.medium_refractive_index,
-            depth_m=self.current_depth_m,
+            depth_m=depth_m,
             temperature_c=temperature_c
         )
 
@@ -609,6 +616,15 @@ class LiDARSLAMApplication:
         dq = self.data_quality.quality_score
         reconnecting = lidar_stats.get('reconnect_attempts', 0) > 0
 
+        # Data-freshness gate (Blind Spot Audit R2 domain 24 #9): a sensor
+        # whose port stays open but has stopped delivering frames (hung/mute)
+        # would otherwise report 'healthy' forever while stale data drives
+        # navigation. Treat a stall longer than STALE_READ_S as degraded.
+        stale_reads = (
+            self.is_running and connected
+            and lidar_stats.get('seconds_since_last_read', 0.0) > self.STALE_READ_S
+        )
+
         # Temperature envelope check (IEC 60945 Category D: -15C..+55C)
         temp_out_of_range = False
         last = self.last_reading
@@ -633,7 +649,8 @@ class LiDARSLAMApplication:
         if self.is_running and not connected:
             state = 'failed'
             reasons.append('sensor_disconnected')
-        elif reconnecting or error_rate > 0.1 or dq < 0.7 or temp_out_of_range or heading_missing:
+        elif (reconnecting or error_rate > 0.1 or dq < 0.7 or temp_out_of_range
+              or heading_missing or stale_reads):
             state = 'degraded'
             if reconnecting:
                 reasons.append('reconnecting')
@@ -645,6 +662,8 @@ class LiDARSLAMApplication:
                 reasons.append('temperature_out_of_range')
             if heading_missing:
                 reasons.append('no_heading_source')
+            if stale_reads:
+                reasons.append('stale_readings')
 
         return {
             'state': state,
@@ -676,14 +695,30 @@ class LiDARSLAMApplication:
             self.heading_ever_set = True
             self.heading_last_update = time.time()
 
+    # A depth sample older than this is treated as absent, so the D3
+    # correction falls back to constant-n instead of biasing every range
+    # with a frozen depth after a pressure-sensor dropout (Blind Spot Audit
+    # R2 domain 22 -- depth telemetry had no staleness guard, unlike attitude).
+    DEPTH_TIMEOUT_S = 2.0
+
     def set_depth(self, depth_m: float):
         """Update the current depth (meters, positive down) from an
         external pressure sensor (e.g. MS5837). Feeds the D3 depth-
         dependent refractive index correction when
         Config.environmental_correction.enabled; otherwise stored but
-        unused."""
+        unused. Timestamped (monotonic) so a stale sample can be ignored."""
         with self._state_lock:
             self.current_depth_m = depth_m
+            self._depth_timestamp = time.monotonic()
+
+    def _fresh_depth(self) -> Optional[float]:
+        """current_depth_m if a sample has arrived within DEPTH_TIMEOUT_S,
+        else None (fall back to constant-n)."""
+        if self.current_depth_m is None or self._depth_timestamp is None:
+            return None
+        if (time.monotonic() - self._depth_timestamp) > self.DEPTH_TIMEOUT_S:
+            return None
+        return self.current_depth_m
 
     def get_status(self) -> Dict:
         """Get comprehensive application status"""
@@ -713,8 +748,33 @@ class LiDARSLAMApplication:
                 'queue_capacity': self._processing_queue.maxsize,
                 'dropped_frames': self._dropped_frames
             },
+            # Golden-signals metrics for the D1/D2/D3-D4/D8 fusion modules
+            # (Rule 3). Each key is present only when its feature flag is on,
+            # so a default build reports an empty object -- no behavior change,
+            # but an enabled module is never a silent black box.
+            'sensor_fusion': self._get_fusion_metrics(),
             'config': self.config.to_dict()
         }
+
+    def _get_fusion_metrics(self) -> Dict:
+        """Rule 3 metrics for the optional deferred-decision modules. Only
+        includes a module when it is enabled (instantiated)."""
+        metrics = {}
+        if self.mavlink_attitude is not None:
+            metrics['mavlink_attitude'] = self.mavlink_attitude.get_statistics()
+        if self.multipath_detector is not None:
+            metrics['multipath'] = {
+                **self.multipath_detector.get_statistics(),
+                'rejected_total': self._multipath_rejected_count,
+            }
+        if self.environmental_corrector is not None:
+            metrics['environmental_correction'] = {
+                **self.environmental_corrector.get_statistics(),
+                'current_depth_m': self.current_depth_m,
+            }
+        if self.ekf is not None:
+            metrics['ekf'] = self.ekf.get_statistics()
+        return metrics
 
 
 # Create Flask application

@@ -29,7 +29,7 @@ Backlog содержит 4 категории работ:
 
 ## Section 1: Blind Spot Audit Round 2
 
-**Status**: IN PROGRESS — domains 15–19 audited (see `BLIND_SPOT_AUDIT_R2_FINDINGS.md`): 44 findings, 12 mechanical fixes applied + committed, remainder logged as NEEDS-DECISION. Domains 20–24 still pending.  
+**Status**: ✅ ALL 10 DOMAINS AUDITED (15–24) — see `BLIND_SPOT_AUDIT_R2_FINDINGS.md`: **84 findings total** (44 in wave 1 + 40 in wave 2), **19 mechanical fixes applied + committed** (12 + 7), remainder logged as NEEDS-DECISION with severity + rationale. Full suite 290/290. Round 2 audit complete; the logged NEEDS-DECISION items feed the "Next-session priorities" list in the findings doc.  
 **Specialist Domains Completed (14/24)**:
 - ✅ Security (OWASP, injection, auth)
 - ✅ Reliability (error handling, fault tolerance)

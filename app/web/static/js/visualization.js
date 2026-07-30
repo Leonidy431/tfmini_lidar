@@ -41,8 +41,11 @@ class PointCloudVisualizer {
         this.camera = new THREE.PerspectiveCamera(60, aspect, 0.1, 1000);
         this.camera.position.set(5, 5, 5);
 
-        // Renderer
-        this.renderer = new THREE.WebGLRenderer({ antialias: true });
+        // Renderer. preserveDrawingBuffer so takeScreenshot()'s toDataURL()
+        // reliably captures the rendered frame rather than a blank canvas on
+        // browsers that clear the buffer after compositing (Blind Spot Audit
+        // R2 domain 20).
+        this.renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
         this.renderer.setSize(this.container.clientWidth, this.container.clientHeight);
         this.renderer.setPixelRatio(window.devicePixelRatio);
         this.container.appendChild(this.renderer.domElement);
@@ -239,14 +242,21 @@ class PointCloudVisualizer {
     }
 
     clear() {
-        if (this.pointCloud) {
-            this.scene.remove(this.pointCloud);
-            this.pointCloud = null;
-        }
-        if (this.trajectory) {
-            this.scene.remove(this.trajectory);
-            this.trajectory = null;
-        }
+        // Dispose GPU geometry/material on every clear, not just remove from
+        // the scene -- otherwise repeated "Clear Map"/"Clear Scan" leaks WebGL
+        // buffers until the context is lost (Blind Spot Audit R2 domain 20).
+        const dispose = (obj) => {
+            if (!obj) return;
+            this.scene.remove(obj);
+            if (obj.geometry) obj.geometry.dispose();
+            if (obj.material) obj.material.dispose();
+        };
+        dispose(this.pointCloud);
+        this.pointCloud = null;
+        dispose(this.trajectory);
+        this.trajectory = null;
+        (this._markers || []).forEach(dispose);
+        this._markers = [];
     }
 
     onResize() {

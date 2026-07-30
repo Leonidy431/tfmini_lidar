@@ -440,9 +440,22 @@ function startStatusUpdates() {
  */
 async function updateStatus() {
     const status = await getStatus();
-    if (status) {
-        updateStatusDisplay(status);
+    if (!status) return;
+    // Distinguish an auth/backend error (apiCall returns {success:false,...})
+    // from a real status payload (which has no `success` field), so the
+    // operator sees "token required" / "backend unreachable" instead of a
+    // silent Disconnected/Stopped that looks identical to a real outage
+    // (Blind Spot Audit R2 domain 20).
+    if (status.success === false) {
+        if (typeof showToast === 'function') {
+            showToast(status.unauthorized
+                ? 'API token required or invalid — set it above.'
+                : `Backend unreachable: ${status.error || 'unknown error'}`,
+                'error');
+        }
+        return;
     }
+    updateStatusDisplay(status);
 }
 
 /**
@@ -649,7 +662,10 @@ function updateNavigationDisplay(data) {
     // right with no sign flip (Physics Audit H2 - the previous negation
     // pointed the arrow the wrong way).
     const arrow = document.getElementById('navArrow');
-    if (arrow && data.heading_error) {
+    // Guard on != null, not truthiness: a heading_error of exactly 0 (perfectly
+    // aligned) is falsy and would otherwise leave the arrow at its last angle
+    // instead of snapping to center (Blind Spot Audit R2 domain 20).
+    if (arrow && data.heading_error != null) {
         arrow.style.transform = `rotate(${data.heading_error}deg)`;
     }
 }
@@ -719,7 +735,15 @@ async function loadMaps() {
     const maps = await listMaps();
     const container = document.getElementById('mapsList');
 
-    if (!maps || maps.length === 0) {
+    // A failed request returns {success:false,...} (truthy, no .length), which
+    // would fall through to maps.map() and TypeError, leaving the list stuck on
+    // "Loading..." forever. Distinguish error from empty (Blind Spot Audit R2
+    // domain 20).
+    if (!Array.isArray(maps)) {
+        container.innerHTML = '<p class="loading">Could not load maps (check API token / connection)</p>';
+        return;
+    }
+    if (maps.length === 0) {
         container.innerHTML = '<p class="loading">No saved maps</p>';
         return;
     }
@@ -775,8 +799,13 @@ async function loadProfiles() {
     const container = document.getElementById('profilesList');
     const select = document.getElementById('profileSelect');
 
-    // Update profiles list
-    if (!profiles || profiles.length === 0) {
+    // Update profiles list. Distinguish a failed request (non-array) from an
+    // empty list so the panel doesn't hang on "Loading..." (domain 20).
+    if (!Array.isArray(profiles)) {
+        container.innerHTML = '<p class="loading">Could not load profiles (check API token / connection)</p>';
+        return;
+    }
+    if (profiles.length === 0) {
         container.innerHTML = '<p class="loading">No saved profiles</p>';
     } else {
         container.innerHTML = profiles.map(profile => `

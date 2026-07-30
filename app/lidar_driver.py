@@ -107,6 +107,12 @@ class TFminiSDriver:
         # Statistics
         self.readings_count = 0
         self.errors_count = 0
+        # Observability counters (Blind Spot Audit R2 domain 24 #11/#12):
+        # distinguish benign frame-sync/checksum misses on a noisy line from
+        # serial-layer faults, and count sentinel/out-of-range readings that
+        # keep total_readings ticking while contributing zero usable data.
+        self.frame_errors = 0       # checksum / header-sync failures
+        self.invalid_readings = 0   # parsed but valid=False (sentinel/floor)
         self.last_reading: Optional[LiDARReading] = None
         self.readings_history = deque(maxlen=100)
 
@@ -307,6 +313,7 @@ class TFminiSDriver:
                 # Invalid checksum, skip this byte
                 del self.buffer[0]
                 self.errors_count += 1
+                self.frame_errors += 1
                 continue
 
             # Parse valid frame
@@ -316,6 +323,8 @@ class TFminiSDriver:
             if reading:
                 self.last_reading = reading
                 self.readings_count += 1
+                if not reading.valid:
+                    self.invalid_readings += 1
                 self.readings_history.append(reading)
 
                 # Call all callbacks. Iterate over a snapshot so callbacks
@@ -486,6 +495,8 @@ class TFminiSDriver:
             'running': self.is_running,
             'total_readings': self.readings_count,
             'total_errors': self.errors_count,
+            'frame_errors': self.frame_errors,
+            'invalid_readings': self.invalid_readings,
             'error_rate': self.errors_count / max(1, self.readings_count),
             'average_distance': round(avg_distance, 3),
             'average_strength': round(avg_strength, 1),

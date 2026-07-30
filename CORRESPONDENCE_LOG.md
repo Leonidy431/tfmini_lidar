@@ -157,6 +157,25 @@ Full suite after this work: **279/279 passing**.
 
 ---
 
+## Entry 12: "продолжай по бек логу, домены 20-24 / Продолжи по тз"
+
+**User ask**: Continue the backlog — Blind Spot Audit R2 domains 20–24 — and continue per the ТЗ.
+
+**Outcome**: Ran three parallel auditors over domains 20 (UX/Frontend), 21 (Scalability), 22 (Underwater), 23 (Hardware), 24 (Observability): **40 findings** (6 HIGH, 20 MEDIUM, rest LOW), appended to `BLIND_SPOT_AUDIT_R2_FINDINGS.md`. Round 2 now complete (all 10 domains, 84 findings total).
+
+Applied **7 mechanical fixes** (+11 regression tests, `tests/test_audit_r2_domains20_24.py`):
+- **Rule 3 / ТЗ compliance (24-7)**: `get_status()` now surfaces a `sensor_fusion` block with per-module golden-signal metrics for the enabled D1/D2/D3/D8 modules (empty on a default build). This directly closes the ТЗ Rule 3 requirement that all sensor/SLAM modules expose metrics — the "продолжи по ТЗ" half.
+- **Health data-freshness (24-9)**: a connected-but-mute sensor (port open, no frames) now degrades health with a `stale_readings` reason after `STALE_READ_S`, instead of reporting "healthy" while stale data drives navigation.
+- **Driver observability (24-11/24-12)**: separate `frame_errors` (checksum/sync) and `invalid_readings` (sentinel/floor) counters, surfaced in `get_statistics()`; `error_rate` semantics left unchanged (safe).
+- **Underwater depth staleness (22-1)**: `set_depth()` is timestamped; `_fresh_depth()` expires a sample after `DEPTH_TIMEOUT_S` so the D3 correction falls back to constant-n rather than biasing every range with a frozen depth after a pressure-sensor dropout.
+- **Frontend robustness (20-3/20-4/20-6/20-13/20-14)**: `loadMaps`/`loadProfiles` distinguish fetch-error from empty (were hanging on "Loading…" forever); `updateStatus` distinguishes token/backend errors from a real outage; `PointCloudVisualizer.clear()` disposes GPU geometry/material/markers (was leaking WebGL buffers); nav arrow guards on `!= null` (0° now snaps to center); renderer uses `preserveDrawingBuffer` (screenshots no longer blank).
+
+**By-design item (22-6)**: the driver's in-air `max_range_m=12.0` default is intentional and consistent with the established library-default philosophy (the driver defaults to air/bench values; the app applies underwater values via config). Documented, not changed — changing it would reject the 5 m frames in existing driver tests. Not a defect.
+
+The remaining ~33 findings are logged as NEEDS-DECISION (multi-ROV registry, CI, Prometheus endpoint, reverse-proxy base path, local-vendored JS libs, O(n²) mapping / per-poll downsample caching, IMU→LiDAR extrinsic, adaptive range, dynamic-return rejection, a11y sweep, latency histogram) — each needs a design/deployment/hardware decision, not a mechanical edit. Full suite: **290/290 passing**.
+
+---
+
 ## Backlog Integration
 
 The items in this log map onto `DEVELOPMENT_BACKLOG.md` Sprint 1 tasks as follows:

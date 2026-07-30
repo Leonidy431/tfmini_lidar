@@ -93,9 +93,90 @@ Full suite: **279/279 passing**.
 
 Files changed: `app/map_manager.py`, `app/security.py`, `app/main.py`, `requirements.txt`, `Dockerfile.arm64`, `docker-compose.yml`, `tests/test_persistence_hardening.py`.
 
-## Next-session priorities (from the 📋 backlog above)
+---
+
+# Domains 20–24 (second wave)
+
+Same method (three parallel auditors). **40 further findings** — 6 HIGH, 20 MEDIUM, remainder LOW. This wave applied **7 mechanical fixes** (backend observability + underwater depth-staleness + frontend robustness); the rest are logged.
+
+## Domain 20 — UX & Dashboard / Frontend
+
+| # | Sev | Finding | Status |
+|---|-----|---------|--------|
+| 20-1 | CRITICAL | Realtime libs load only from public CDN — offline field use → whole dashboard dead | 📋 (vendor socket.io/three.js locally — decision + asset commit) |
+| 20-2 | HIGH | Absolute `/api`, `/static`, socket.io paths break behind a reverse-proxy subpath | 📋 (derive base path — BlueOS mount-point decision) |
+| 20-3 | HIGH | Failed maps/profiles fetch throws, list stuck on "Loading…" forever | ✅ `Array.isArray` guard + error state in `loadMaps`/`loadProfiles` |
+| 20-4 | HIGH | 401/expired token renders identically to backend-down | ✅ `updateStatus` detects `success===false`/`unauthorized`, distinct toast |
+| 20-5 | MEDIUM | Most control handlers silently swallow failures | 📋 (add `else showToast(...)` across ~7 handlers — larger sweep) |
+| 20-6 | MEDIUM | `PointCloudVisualizer.clear()` leaks GPU geometry/material | ✅ dispose geometry+material+markers in `clear()` |
+| 20-7 | MEDIUM | No touch controls on the 3D view — unusable on a field tablet | 📋 (add pointer/touch or OrbitControls — decision) |
+| 20-8 | MEDIUM | Localization 2D canvas can render at zero size until a window resize | 📋 (ResizeObserver / resize in switchTab) |
+| 20-9 | MEDIUM | Tabs lack `aria-selected`/`tabpanel` roles + keyboard nav | 📋 (a11y sweep) |
+| 20-10 | MEDIUM | Connection status conveyed by color alone, never announced | 📋 (a11y: text + aria-label) |
+| 20-11 | MEDIUM | Low-contrast secondary text below WCAG AA | 📋 (color decision) |
+| 20-12 | LOW | Blocking `alert()`/`confirm()`, suppressible in kiosk webviews | 📋 |
+| 20-13 | LOW | Nav arrow not updated when `heading_error` is exactly 0 | ✅ guard on `!= null` |
+| 20-14 | LOW | Screenshot may be blank (no `preserveDrawingBuffer`) | ✅ set `preserveDrawingBuffer: true` |
+
+## Domain 21 — Scalability & multi-ROV
+
+| # | Sev | Finding | Status |
+|---|-----|---------|--------|
+| 21-1 | HIGH | Global singleton + single shared mode blocks multi-ROV entirely | 📋 (vehicle-id registry — architectural decision) |
+| 21-2 | MEDIUM | `SLAMEngine.poses` list grows unbounded for the whole mission | 📋 (bounded/decimated deque) |
+| 21-3 | MEDIUM | Full-cloud voxel downsample per web poll, on request thread, under SLAM lock | 📋 (cache downsampled cloud, invalidate on scan) |
+| 21-4 | MEDIUM | Accumulated-cloud growth O(n)/scan via `+` concat → ~O(n²)/mission | 📋 (chunked buffer + fixed-cadence downsample) |
+| 21-5 | MEDIUM | Particle-filter update pure-Python O(particles×map_points)/reading | 📋 (vectorize / KD-tree) |
+| 21-6 | LOW | Localization ICP matches full non-downsampled reference map each scan | 📋 |
+
+## Domain 22 — Underwater domain-specific
+
+| # | Sev | Finding | Status |
+|---|-----|---------|--------|
+| 22-1 | HIGH | Depth telemetry had no staleness guard (unlike attitude) — frozen depth biases every range | ✅ `set_depth` timestamped; `_fresh_depth()` expires after `DEPTH_TIMEOUT_S`, falls back to constant-n |
+| 22-2 | MEDIUM | Salinity + water-temperature terms unmodeled in refractive index | 📋 (CTD-driven n — needs sensor + decision) |
+| 22-3 | MEDIUM | SLAM assumes rigid static world; bubbles/particulate/fish become permanent map points | 📋 (temporal-persistence/occupancy filter — design) |
+| 22-4 | MEDIUM | Multipath filter can't catch high-signal near returns (specular/hull/bubble) | 📋 (gate on posterior+geometry, not low-signal precondition) |
+| 22-5 | MEDIUM | Fixed 4.0 m `max_range` doesn't adapt to turbidity/thermocline | 📋 (adaptive range from attenuation/quality-score) |
+| 22-6 | LOW | Driver's built-in default `max_range_m=12.0` (in-air) | ✅ by-design: library default stays air/bench (matches `medium_refractive_index=1.0` default philosophy); app always passes 4.0 via config. Documented, not changed (changing it would reject the 5 m frames in existing driver tests). |
+
+## Domain 23 — Hardware Integration & Calibration
+
+| # | Sev | Finding | Status |
+|---|-----|---------|--------|
+| 23-1 | HIGH | IMU→LiDAR extrinsic (lever-arm + mount rotation) never applied | 📋 (configurable SE(3) extrinsic — needs mounting data) |
+| 23-2 | MEDIUM | Frame timestamp stamped at parse time after bulk read, not at capture | 📋 (per-frame cadence anchoring) |
+| 23-3 | MEDIUM | No output-format/firmware handshake at init | 📋 (query version, force format — mechanical but needs hardware to validate) |
+| 23-4 | MEDIUM | Hot-unplug re-enumeration (ttyUSB0→ttyUSB1) not handled | 📋 (by-id/by-path symlink — decision) |
+| 23-5 | MEDIUM | No calibration persistence (D3/D4 coefficients + sensor EEPROM lost on restart) | 📋 (persist to data volume — ties to 23 & D3/D4 P9) |
+| 23-6 | LOW | Dockerfile vs compose device-map mismatch; MAVLink defaults to UDP | 📋 (reconcile + document serial connection string) |
+
+## Domain 24 — Observability & Telemetry
+
+| # | Sev | Finding | Status |
+|---|-----|---------|--------|
+| 24-7 | HIGH | New D1/D2/D3/D8 `get_statistics()` exposed nowhere | ✅ `sensor_fusion` block added to `get_status()` (per-module, enabled-only) |
+| 24-8 | HIGH | No Prometheus `/metrics` endpoint despite documented monitoring stack | 📋 (add endpoint or drop the docs claim — decision) |
+| 24-9 | HIGH | Health check ignores data freshness — mute-but-connected sensor reads "healthy" | ✅ `STALE_READ_S` gate → `degraded` + `stale_readings` reason |
+| 24-10 | MEDIUM | Latency golden signal missing (Rule 3) | 📋 (time `_process_reading`, expose histogram) |
+| 24-11 | MEDIUM | Valid-frame rejections dropped with no counter | ✅ driver `invalid_readings` counter, surfaced in stats |
+| 24-12 | MEDIUM | Checksum/sync errors lumped into `errors_count` (drives health gate) | ✅ separate `frame_errors` counter surfaced (error_rate semantics unchanged — safe) |
+| 24-13 | LOW | No request tracing / correlation IDs | 📋 |
+| 24-14 | LOW | Per-reading rejections log per-frame (flood at DEBUG, invisible at INFO) | 📋 (periodic aggregate counter) |
+
+## Domains 20–24 fixes applied this wave (7 mechanical) — verification
+
+`tests/test_audit_r2_domains20_24.py` (11 tests): depth staleness (fresh applied / stale→constant-n / helper), health freshness (stale→degraded, fresh→healthy), driver counters (frame_errors on bad checksum, invalid_readings on sentinel, valid not miscounted), fusion metrics (default empty, enabled reported, `sensor_fusion` key present). Frontend fixes (20-3/4/6/13/14) verified by inspection (no JS test harness).
+
+Full suite after both waves: **290/290 passing**.
+
+---
+
+## Next-session priorities (from the 📋 backlog across both waves)
 
 1. **CI (16-3)** — highest leverage: nothing caught the build-breaking `EXPOSE` bug because nothing runs. A minimal `.github/workflows/ci.yml` (dependency-light pytest + `docker build` both files) prevents recurrence.
 2. **Container startup (15-1 / 18-5)** — the default `docker compose up -d` crash-loops; needs the gunicorn CMD decision.
 3. **WS auth default + route auth (18-1, 18-2)** — read-exfiltration scope; a security-posture decision.
-4. **Dockerfile.arm64 cleanup (15-4/5/7)** — conflicting pins + single-stage + Open3D double-install.
+4. **Reverse-proxy base path + local vendored libs (20-1, 20-2)** — the dashboard is dead offline and behind a subpath, i.e. exactly the BlueOS deployment shape.
+5. **Scalability O(n²) mapping + per-poll downsample (21-3, 21-4)** — the map pipeline degrades with size/clients; caching + chunked accumulation is mechanical once the shape is agreed.
+6. **IMU→LiDAR extrinsic (23-1)** and **adaptive range / dynamic-return rejection (22-3, 22-5)** — underwater correctness, need mounting/field data.
