@@ -1,5 +1,15 @@
 # BlueOS LiDAR SLAM Navigation System (BLSNS)
 
+@.clauderc
+
+> The 99 rules imported above (project codename "Посох") are the binding engineering-discipline
+> baseline for this repo: architecture scrutiny, adversarial code review, 95%+ test coverage,
+> security/OWASP review, performance discipline, and process hygiene. Rule 99 is absolute: code
+> without 95%+ coverage, with architectural blind spots, or diverging from the ТЗ (this file /
+> `docs/`) has no right to be in production. Rules 1-10, 26-50, and 99 compose directly with
+> Rule 1 (Blind Spot Audit) and Rule 7 (12-phase HLD) below — run them together, not as separate
+> checklists.
+
 ## Project Overview
 
 TFmini-S LiDAR integration for BlueOS underwater ROV navigation with SLAM mapping, profile recording, and object detection.
