@@ -548,10 +548,18 @@ Per-request history and the engineering decisions made while implementing D1/D2/
 
 ## Section 6: Continuous Blind-Spot Monitoring
 
-**Status**: ACTIVE (session-scoped cron, see below)
+**Status**: LAPSED — the session-scoped cron job described below was lost when the execution container was reset (see Section 7). `CronCreate` jobs are session-scoped by design and do not survive a container restart; this was always documented as the mechanism's limitation, and it materialized. If continuous monitoring is still wanted, it needs re-scheduling in a live session, or — better, given it already lapsed once — promoting to actual CI (Domain 16 in `BLIND_SPOT_AUDIT_R2_PLAN.md`), which is now also priority #1 in the NEEDS-DECISION list precisely because nothing else catches this class of gap.
 
-Per user request, a recurring check runs approximately every 2 hours during this session to look for newly-introduced blind spots (in the D1/D2/D3-D4/D8 code just added, and in the wider codebase) and close the safe/mechanical ones directly, following the same Rule 1 (Blind Spot Audit) severity triage used for the original 70-finding audit:
+Original design (for reference / re-scheduling): a recurring check every ~2 hours looking for newly-introduced blind spots (in the D1/D2/D3-D4/D8 code, and a rotating slice of the wider codebase) and closing the safe/mechanical ones directly, following the same Rule 1 severity triage used for the original 70-finding audit. Auto-fix policy: only mechanical, low-risk fixes applied and committed; anything requiring a design decision or hardware data logged instead of guessed at.
 
-- **Scope per run**: a focused pass (not a full 12-specialist fan-out) over recently-changed files plus a rotating slice of the codebase, looking for correctness bugs, missing test coverage, and doc/code drift
-- **Auto-fix policy**: only mechanical, low-risk fixes are applied directly (typos, missing edge-case handling, test gaps) and committed; anything requiring a design decision or hardware data is logged as a new backlog entry instead of guessed at
-- **Caveat**: the scheduling mechanism (`CronCreate`) is session-scoped — jobs live only in the current session and are lost if the session ends, and auto-expire after 7 days if the session is long-lived. This is a best-effort convenience for the current working session, not a durable CI job; a real recurring audit should be wired into CI/CD (see Domain 16 in `BLIND_SPOT_AUDIT_R2_PLAN.md`) for guarantees beyond one session.
+---
+
+## Section 7: Engineering Discipline Baseline (.clauderc) + Coverage Milestone
+
+**Status**: DONE
+
+`.clauderc` (repo root) adds 99 numbered engineering-discipline rules — codename "Посох" — imported into every session via `@.clauderc` at the top of `CLAUDE.md`. Six sections: architecture (1-10), adversarial code review (11-25), 95%+ test coverage discipline (26-50), security/OWASP (51-70), performance (71-85), process/documentation (86-99). Rule 99 is the binding law: no code without 95%+ coverage, blind spots, or ТЗ divergence may ship. It composes with, rather than replaces, this repo's existing Rule 1 (Blind Spot Audit) and Rule 7 (12-phase HLD).
+
+Acting on Rule 99 immediately: overall `app/` test coverage was driven from **71% → 99%** (3120 statements, 40 missing), closing essentially every remaining branch across every module — see `CORRESPONDENCE_LOG.md` Entry 13 for the full methodology, including two real test-isolation bugs the coverage push surfaced and fixed (a shared-singleton config leak in `SLAMEngine()`, and an Open3D object-aliasing bug that was silently corrupting an ICP registration target in a *test*, not production code, but worth knowing the failure mode of). Full suite: 562/562 tests, stable across repeated runs.
+
+The 40 remaining uncovered lines are the `if __name__ == '__main__':` entry guard, near-duplicate error-handler lines, and a few defensive except branches whose mock setup cost would exceed their value — logged here rather than chased further, per the same cost/benefit judgment .clauderc Rule 26 implies ("target... not necessarily 100%").

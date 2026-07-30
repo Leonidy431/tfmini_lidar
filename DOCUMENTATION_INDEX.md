@@ -10,6 +10,7 @@ Single entry point into all BLSNS documentation. Grouped by purpose, not by dire
 |---|---|
 | [`README.md`](README.md) | Project overview, quick start, hardware requirements, API summary |
 | [`CLAUDE.md`](CLAUDE.md) | Mandatory project rules (Rules 1-7): blind-spot audits, FTO, golden signals, data quality, risk management, session continuity, the 12-phase algorithm HLD |
+| [`.clauderc`](.clauderc) | 99 engineering-discipline rules ("Посох"), imported into every session via `@.clauderc` in CLAUDE.md; composes with Rules 1 and 7 rather than replacing them |
 | [`DOCUMENTATION_INDEX.md`](DOCUMENTATION_INDEX.md) | This file |
 
 ---

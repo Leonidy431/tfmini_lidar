@@ -176,6 +176,24 @@ The remaining ~33 findings are logged as NEEDS-DECISION (multi-ROV registry, CI,
 
 ---
 
+## Entry 13: ".clauderc" + "Слепые пятна закрой. Покрытие на 99 процентов"
+
+**User ask**: Add `.clauderc` — 99 rules of engineering discipline ("Посох" project codename), imported into CLAUDE.md via `@.clauderc`. Then: close remaining blind spots, drive test coverage to 99%.
+
+**Environment note**: mid-turn, the session's container reset to a fresh checkout of the *original* designated branch (`claude/blue-os-lidar-system-LoGoc`, the tiny pre-audit repo state) with no Python packages installed. The real work was intact on `origin/claude/physics-engineering-audit` at the exact last-pushed commit (`fce8bf2`) — recovered via `git fetch` + `git checkout -B`. Lost: 9 uncommitted coverage-drive test files from the *previous* turn's in-progress work (had reached 95% coverage, never committed). Recreated all 9 files from scratch (verified byte-for-byte behavior against the working code, no data loss beyond re-typing), committing after every batch this time specifically to prevent a repeat.
+
+**Outcome**:
+- `.clauderc` added (99 rules: architecture/review/testing/security/performance/process), imported via `@.clauderc` in CLAUDE.md, cross-referenced against the existing Rule 1 (Blind Spot Audit) and Rule 7 (12-phase HLD) rather than duplicating them.
+- Recovered coverage work: `test_api_routes.py` (51), `test_map_manager_full.py`/`test_lidar_driver_full.py`/`test_mavlink_full.py` (51), `test_coverage_fill_extra.py`/`test_main_internals.py` (58), `test_error_branches.py`/`test_coverage_last_mile.py`/`test_coverage_final.py` (67) — each batch committed and pushed separately. Baseline 71% → 95%, matching pre-reset state exactly.
+- New: `test_coverage_99.py` (63 tests) closing the remaining gap to the user's explicit 99% target: feature-flag singleton branches, all 6 Flask error handlers, before_request branches, driver reconnect/timeout/exception paths, map_manager traversal guards and all-formats-failed path, localization exception/lost/gimbal-lock branches, SLAM buffer-cap/reorthonormalization/downsample/degenerate branches, profile_recorder guard/retry-exhaustion branches, security's defensive safe_join fallback, data_quality IQR branch, scanner_3d small branches.
+- **Final: 3120 statements, 40 missing = 99% total coverage.** 562/562 tests passing, stable across 3 repeated full-suite runs.
+- Two real test-isolation bugs found and fixed while writing this suite: (1) `SLAMEngine()` defaults to the shared `Config.slam` singleton when no config is passed, so an earlier test mutating `eng.config.X` directly was leaking state into every later `SLAMEngine()` instance in the suite — fixed by passing explicit `SLAMConfig()` instances (this is exactly the class of bug .clauderc Rule 33/45 calls out). (2) `accumulated_cloud` and `reference_cloud.pcd` alias the *same* Open3D object immediately after the bootstrap scan, so a test mutating `accumulated_cloud.points` in place was silently corrupting the ICP registration target for every subsequent scan — fixed by assigning a new `PointCloud` object instead of mutating in place.
+- One flaky-test lesson: an initial version of the reorthonormalization/downsample test chained 50+ *real* ICP registrations on randomly-shifted planar data and was unreliable (in-plane lateral translation is a classic ill-conditioned "aperture problem" case for ICP). Redesigned as a deterministic unit test — arrange `_scans_since_reortho` and `accumulated_cloud` directly one real, well-conditioned registration away from each threshold, rather than depending on dozens of consecutive lucky registrations from scratch.
+
+Remaining 40 uncovered lines are the `if __name__ == '__main__':` entry guard, a few near-duplicate error-handler lines, and defensive except branches whose mock setup cost outweighs their value — not blind spots, just past the point of diminishing returns for a hardware/network-adjacent codebase.
+
+---
+
 ## Backlog Integration
 
 The items in this log map onto `DEVELOPMENT_BACKLOG.md` Sprint 1 tasks as follows:
