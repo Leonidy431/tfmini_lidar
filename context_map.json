@@ -1,0 +1,191 @@
+{
+  "$schema_note": "Dynamic project dependency map (AST-lite). Regenerate the 'modules' section whenever import statements change: `grep -E '^from app\\.|^import app\\.' app/*.py`. Regenerate 'tests_covering' whenever a test file's imports change: `grep -oE 'from app\\.[a-z_0-9]+' tests/test_*.py`. This file exists so an agent can answer 'what depends on the file I'm about to edit?' without re-reading the whole tree -- see CLAUDE.md Rule 8 and validation_protocol.md Step 0.",
+  "generated": "2026-07-30",
+  "generated_by": "manual grep audit (see $schema_note for the regeneration commands)",
+  "root_package": "app",
+  "modules": {
+    "app/config.py": {
+      "role": "Dataclass configuration singletons (Config.lidar, Config.slam, Config.mavlink_attitude, ...). Env-var driven, read once at import time.",
+      "depends_on": [],
+      "depended_on_by": ["app/localization.py", "app/main.py", "app/map_manager.py",
+                          "app/object_detection.py", "app/profile_recorder.py",
+                          "app/scanner_3d.py", "app/slam_engine.py"],
+      "hot_cold": "hot",
+      "note": "Mutating a Config.* singleton attribute in a test leaks into every later test that doesn't pass its own config instance -- see CORRESPONDENCE_LOG.md Entry 13 for the exact bug this caused in SLAMEngine()."
+    },
+    "app/security.py": {
+      "role": "Auth (token hash/validate), rate limiting, path-traversal guards (safe_join, validate_path_component).",
+      "depends_on": [],
+      "depended_on_by": ["app/main.py", "app/map_manager.py", "app/profile_recorder.py"],
+      "hot_cold": "hot",
+      "note": "Any change here touches every state-changing REST route via @require_auth/@require_rate_limit decorators in main.py."
+    },
+    "app/lidar_driver.py": {
+      "role": "TFmini-S UART driver: 9-byte frame parsing, checksum, sentinel/saturation decoding, auto-reconnect, monotonic timestamps.",
+      "depends_on": [],
+      "depended_on_by": ["app/main.py"],
+      "hot_cold": "warm",
+      "note": "Hardware-adjacent. No app/config import -- constructor takes explicit params from main.py's Config reads."
+    },
+    "app/mavlink_imu.py": {
+      "role": "D1: MAVLink 3D attitude (quaternion/Euler math, MAVLinkAttitudeReader). pymavlink optional at import time.",
+      "depends_on": [],
+      "depended_on_by": ["app/main.py", "app/ekf_3d_attitude.py (indirect: quaternion_to_rotation_matrix reused for SE3 pose)"],
+      "hot_cold": "hot",
+      "note": "Deferred-decision module (P9 field validation pending hardware). Feature-flagged via Config.mavlink_attitude.enabled, default off."
+    },
+    "app/multipath_detector.py": {
+      "role": "D2: 2-component Gaussian mixture (hand-rolled EM) for scattered-light/turbidity outlier rejection.",
+      "depends_on": [],
+      "depended_on_by": ["app/main.py"],
+      "hot_cold": "hot",
+      "note": "P9-sim validated (100% detection / 0% FP @ 3 NTU synthetic). Percentile init + Ashman's-D bimodality guard fixed a real 16.5% false-positive bug -- see docs/P9_SIMULATION_VALIDATION.md."
+    },
+    "app/environmental_correction.py": {
+      "role": "D3+D4: depth-dependent refractive index n(z) + temperature ToF drift compensation.",
+      "depends_on": [],
+      "depended_on_by": ["app/main.py"],
+      "hot_cold": "hot",
+      "note": "Feature-flagged, default off. main.py's set_depth()/_fresh_depth() gate this on depth-sample staleness."
+    },
+    "app/ekf_3d_attitude.py": {
+      "role": "D8: 9-DOF (position+attitude+velocity) EKF fusing LiDAR/SLAM position with MAVLink attitude. Joseph-form covariance update.",
+      "depends_on": ["app/mavlink_imu.py (quaternion_to_rotation_matrix, euler_to_quaternion for get_se3_pose)"],
+      "depended_on_by": ["app/main.py"],
+      "hot_cold": "hot",
+      "note": "P9-sim: 49.5% position RMSE improvement vs raw. Field P9 (real trajectories) still pending."
+    },
+    "app/slam_engine.py": {
+      "role": "ICP-based scan-to-scan registration (Open3D), accumulated point cloud, drift/degeneracy handling.",
+      "depends_on": ["app/config.py"],
+      "depended_on_by": ["app/main.py"],
+      "hot_cold": "warm",
+      "note": "SLAMEngine() defaults to the SHARED Config.slam singleton when no config passed -- always construct with an explicit SLAMConfig() in tests that mutate config fields."
+    },
+    "app/localization.py": {
+      "role": "Scan-to-map ICP localization (LocalizationEngine) + standalone particle filter (ParticleFilterLocalizer).",
+      "depends_on": ["app/config.py"],
+      "depended_on_by": ["app/main.py"],
+      "hot_cold": "cold"
+    },
+    "app/map_manager.py": {
+      "role": "Atomic map persistence: staging-dir + fsync + os.replace swap, multi-format (ply/pcd/npy/h5), metadata validation.",
+      "depends_on": ["app/config.py", "app/security.py"],
+      "depended_on_by": ["app/main.py"],
+      "hot_cold": "warm",
+      "note": "Blind Spot Audit R2 domain 17 hardening: power-loss-safe by design now. Do not reintroduce a non-atomic write path."
+    },
+    "app/profile_recorder.py": {
+      "role": "Navigation waypoint recording/playback (ProfileRecorder), route guidance state machine (ProfileNavigator).",
+      "depends_on": ["app/config.py", "app/security.py"],
+      "depended_on_by": ["app/main.py"],
+      "hot_cold": "cold"
+    },
+    "app/object_detection.py": {
+      "role": "Pattern analysis (edge/flat/oscillating) + KD-tree DBSCAN-style clustering for obstacle classification.",
+      "depends_on": ["app/config.py"],
+      "depended_on_by": ["app/main.py"],
+      "hot_cold": "cold"
+    },
+    "app/scanner_3d.py": {
+      "role": "3D object scanner: orbit-scan point accumulation, per-layer coverage tracking.",
+      "depends_on": ["app/config.py"],
+      "depended_on_by": ["app/main.py"],
+      "hot_cold": "cold"
+    },
+    "app/data_quality.py": {
+      "role": "IQR/Z-score/rate-of-change outlier filtering with regime-change recovery (Rule 4).",
+      "depends_on": [],
+      "depended_on_by": ["app/main.py"],
+      "hot_cold": "cold"
+    },
+    "app/main.py": {
+      "role": "Flask REST API + Flask-SocketIO server. Orchestrates every other module; owns the singleton LiDARSLAMApplication + lidar_app instance.",
+      "depends_on": ["app/config.py", "app/lidar_driver.py", "app/slam_engine.py",
+                     "app/localization.py", "app/map_manager.py", "app/profile_recorder.py",
+                     "app/object_detection.py", "app/scanner_3d.py", "app/data_quality.py",
+                     "app/security.py", "app/mavlink_imu.py", "app/multipath_detector.py",
+                     "app/environmental_correction.py", "app/ekf_3d_attitude.py"],
+      "depended_on_by": [],
+      "hot_cold": "hot",
+      "note": "Highest blast radius in the repo -- every module funnels through here. 729 statements, 98% covered. Changing a route's decorator order changes auth/rate-limit interaction (see Blind Spot Audit R2 domain 18 #4)."
+    }
+  },
+  "web_frontend": {
+    "app/web/static/js/app.js": {
+      "role": "Main dashboard event wiring, status polling, per-mode UI updates.",
+      "talks_to": ["/api/* routes in app/main.py via app/web/static/js/api.js", "SocketIO events"]
+    },
+    "app/web/static/js/api.js": {
+      "role": "Thin fetch wrapper: token header injection, error normalization to {success:false,...}."
+    },
+    "app/web/static/js/visualization.js": {
+      "role": "Three.js PointCloudVisualizer (3D) + Canvas2D LocalizationVisualizer."
+    },
+    "app/web/templates/index.html": {
+      "role": "Single-page dashboard shell; loads CDN three.js/socket.io (Blind Spot Audit R2 20-1: no offline fallback yet)."
+    }
+  },
+  "tests_covering": {
+    "app/config.py": ["test_config_physics.py", "test_coverage_99.py"],
+    "app/security.py": ["test_security.py", "test_api_routes.py", "test_main_internals.py",
+                          "test_coverage_last_mile.py", "test_error_branches.py",
+                          "test_persistence_hardening.py", "test_coverage_99.py"],
+    "app/lidar_driver.py": ["test_driver_mock.py", "test_lidar.py", "test_lidar_driver_full.py",
+                              "test_api_routes.py", "test_audit_r2_domains20_24.py",
+                              "test_deferred_decisions_integration.py", "test_main_internals.py",
+                              "test_main_physics.py", "test_coverage_final.py", "test_coverage_99.py"],
+    "app/mavlink_imu.py": ["test_mavlink_imu.py", "test_mavlink_full.py",
+                             "test_audit_r2_domains20_24.py", "test_deferred_decisions_integration.py",
+                             "test_p9_simulation.py", "test_coverage_99.py"],
+    "app/multipath_detector.py": ["test_multipath_detector.py", "test_audit_r2_domains20_24.py",
+                                    "test_deferred_decisions_integration.py", "test_p9_simulation.py"],
+    "app/environmental_correction.py": ["test_environmental_correction.py",
+                                          "test_audit_r2_domains20_24.py",
+                                          "test_deferred_decisions_integration.py",
+                                          "test_p9_simulation.py", "test_coverage_final.py",
+                                          "test_coverage_99.py"],
+    "app/ekf_3d_attitude.py": ["test_ekf_3d_attitude.py", "test_audit_r2_domains20_24.py",
+                                 "test_deferred_decisions_integration.py", "test_p9_simulation.py"],
+    "app/slam_engine.py": ["test_slam_physics.py", "test_lidar.py", "test_coverage_fill_extra.py",
+                             "test_error_branches.py", "test_coverage_final.py", "test_coverage_99.py"],
+    "app/localization.py": ["test_localization_physics.py", "test_lidar.py",
+                              "test_coverage_fill_extra.py", "test_coverage_last_mile.py",
+                              "test_coverage_99.py"],
+    "app/map_manager.py": ["test_lidar.py", "test_map_manager_full.py", "test_coverage_last_mile.py",
+                             "test_error_branches.py", "test_persistence_hardening.py",
+                             "test_api_routes.py", "test_coverage_99.py"],
+    "app/profile_recorder.py": ["test_detection_nav.py", "test_lidar.py",
+                                  "test_coverage_fill_extra.py", "test_coverage_last_mile.py",
+                                  "test_error_branches.py", "test_api_routes.py",
+                                  "test_coverage_99.py"],
+    "app/object_detection.py": ["test_detection_nav.py", "test_lidar.py",
+                                  "test_coverage_fill_extra.py", "test_coverage_last_mile.py",
+                                  "test_error_branches.py", "test_coverage_final.py",
+                                  "test_api_routes.py", "test_coverage_99.py"],
+    "app/scanner_3d.py": ["test_scanner_3d.py", "test_api_routes.py", "test_coverage_99.py"],
+    "app/data_quality.py": ["test_data_quality.py", "test_coverage_99.py"],
+    "app/main.py": ["test_api_routes.py", "test_main_physics.py", "test_health_heading.py",
+                      "test_main_internals.py", "test_deferred_decisions_integration.py",
+                      "test_audit_r2_domains20_24.py", "test_error_branches.py",
+                      "test_p9_simulation.py", "test_coverage_final.py", "test_coverage_99.py"]
+  },
+  "coverage_summary": {
+    "as_of_commit": "6c94d01",
+    "total_statements": 3120,
+    "missing": 40,
+    "percent": 99,
+    "source": "python3 -m pytest tests/ --cov=app --cov-report=term-missing"
+  },
+  "deferred_decisions_status": {
+    "D1_mavlink_3d_attitude": "code done, P9-sim done, P9-field pending hardware",
+    "D2_multipath_detection": "code done, P9-sim done, P9-field pending hardware",
+    "D3_depth_refractive_index": "code done, P9-sim done, P9-field pending hardware",
+    "D4_temperature_compensation": "code done, P9-sim done, P9-field pending hardware",
+    "D5_vibration_filtering": "spec only, low priority",
+    "D6_velocity_profile_modeling": "spec only, low priority",
+    "D7_viscosity_tuning": "spec only, low priority",
+    "D8_ekf_fusion": "code done, P9-sim done, P9-field pending hardware",
+    "source": "TECHNICAL_SPECIFICATION.md phase-status table"
+  }
+}

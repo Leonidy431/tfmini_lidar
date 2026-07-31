@@ -1,0 +1,85 @@
+# .claudeignore — context-window noise filter (AUTONOMY_HACKS.md Параметр 1 #13)
+#
+# NOT a security boundary and NOT a build-context filter (that's
+# .dockerignore, which stays separate and stricter). This file exists
+# purely so an autonomous agent doesn't burn its context window reading
+# generated artifacts, caches, or binary blobs that carry no information
+# per token. When genuinely investigating one of these paths (e.g.
+# debugging a specific coverage gap in htmlcov/), read it explicitly by
+# path — this file only affects broad/exploratory reads (tree walks, glob
+# searches), not a direct Read call on a named file.
+
+# Python bytecode & caches
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Coverage artifacts (regenerate via `pytest --cov`, never hand-edit)
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+
+# Virtual environments / dependency trees (equivalent of node_modules)
+venv/
+.venv/
+env/
+ENV/
+*.egg-info/
+build/
+dist/
+
+# Logs and runtime data (this project's DATA_DIR contents)
+*.log
+logs/
+data/maps/
+data/profiles/
+data/objects/
+
+# Point cloud / binary data blobs (large, non-token-dense, read via a
+# script/loader when actually needed, never by pasting into context)
+*.ply
+*.pcd
+*.h5
+*.npy
+*.npz
+
+# Version control internals
+.git/
+.gitignore
+
+# IDE / OS noise
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+
+# Compiled / packaged output
+*.so
+*.dylib
+*.dll
+*.whl
+*.tar.gz
+
+# Lock files (content is machine-generated pin data, not something an
+# agent should read line-by-line to reason about; check for EXISTENCE and
+# top-level version conflicts instead, per AUTONOMY_HACKS.md Токен-
+# эффективность #2)
+package-lock.json
+yarn.lock
+poetry.lock
+
+# Scratch/temp directories an agent may create for itself
+/tmp/
+scratch/
+*.tmp
+
+# Large generated docs/dumps that are regenerated, not hand-authored
+# (context_map.json is the one exception -- it's small, curated, and IS
+# meant to be read; keep it OUT of this list)

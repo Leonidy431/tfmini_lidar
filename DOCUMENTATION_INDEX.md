@@ -9,9 +9,23 @@ Single entry point into all BLSNS documentation. Grouped by purpose, not by dire
 | Doc | What it's for |
 |---|---|
 | [`README.md`](README.md) | Project overview, quick start, hardware requirements, API summary |
-| [`CLAUDE.md`](CLAUDE.md) | Mandatory project rules (Rules 1-7): blind-spot audits, FTO, golden signals, data quality, risk management, session continuity, the 12-phase algorithm HLD |
+| [`CLAUDE.md`](CLAUDE.md) | Mandatory project rules (Rules 1-8): blind-spot audits, FTO, golden signals, data quality, risk management, session continuity, the 12-phase algorithm HLD, the autonomous-agent nervous system |
 | [`.clauderc`](.clauderc) | 99 engineering-discipline rules ("Посох"), imported into every session via `@.clauderc` in CLAUDE.md; composes with Rules 1 and 7 rather than replacing them |
 | [`DOCUMENTATION_INDEX.md`](DOCUMENTATION_INDEX.md) | This file |
+
+---
+
+## Autonomous Agent Nervous System (CLAUDE.md Rule 8)
+
+| File | What it's for |
+|---|---|
+| [`AUTONOMY_HACKS.md`](AUTONOMY_HACKS.md) | 99 lifehacks across 7 selection parameters (context density, determinism, self-healing, state management, token efficiency, tool chaining, sandboxing) + the golden meta-rule; origin story and rationale for the four files below |
+| [`state_journal.md`](state_journal.md) | Machine-checkable "where did the last iteration leave off" — read before starting, append before ending any turn that changed files |
+| [`validation_protocol.md`](validation_protocol.md) | The enforceable checklist: confidence gate before coding, test/coverage/stability steps before claiming done |
+| [`context_map.json`](context_map.json) | Dependency map for every `app/*.py` module + which tests cover each one + current coverage/deferred-decision status |
+| [`.claudeignore`](.claudeignore) | Context-window noise filter (caches, binaries, logs, data dumps) — not a security or build-context boundary, those are separate |
+
+**Reading order after any session break**: `state_journal.md` (what happened) → `git status`/`git log` (verify it matches reality) → `context_map.json` (blast radius of what you're about to touch) → proceed per `validation_protocol.md`.
 
 ---
 

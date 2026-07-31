@@ -276,6 +276,55 @@ Result: Log-space wins 28/32 votes, confidence 87.5%
 - [RTABMap] https://github.com/introlab/rtabmap
 ```
 
+### Rule 8: Autonomous Agent Nervous System
+
+**Purpose**: Rules 1-7 govern *what* to build and *how thoroughly*. Rule 8
+governs *how an autonomous agent stays coherent across many iterations*
+without a human re-establishing context every turn — memory, self-checking,
+context-window hygiene, and a hard brake on low-confidence action. It exists
+because a smart agent with no memory of its own past actions and no
+self-verification algorithm will hallucinate state and loop, no matter how
+good its code-writing is in any single turn.
+
+**Origin**: synthesized from a 12-expert symposium (creative
+designer/skeptic critic/meticulous analyst) on what this project's existing
+artifacts (ТЗ, backlog, `CLAUDE.md`, `.clauderc`) were missing for full
+autonomy. Full rationale, the 99-lifehack reference list (7 selection
+parameters × 14 each + one golden meta-rule), and the reflection on
+model-limits-vs-protocol-limits live in **`AUTONOMY_HACKS.md`** — read it
+once, then treat this Rule as the enforceable summary.
+
+**The four artifacts** (created at the repo root; regenerate/update per
+their own internal instructions, not by hand-guessing):
+
+| File | Answers | When to touch it |
+|---|---|---|
+| `state_journal.md` | "Where did the last iteration leave off?" | Read before starting any task. Append a new entry before ending any turn that changed files. |
+| `validation_protocol.md` | "Am I actually done, and was I ever justified starting?" | Step 0 (confidence gate) before writing code; Steps 1-4 before claiming a task complete. |
+| `.claudeignore` | "What's noise, not signal, for context purposes?" | Consult before broad/exploratory reads (tree walks, glob searches); irrelevant for a direct read of a named file. |
+| `context_map.json` | "What depends on the file I'm about to edit, and what tests cover it?" | Before editing any `app/*.py` module; before deciding a change is low-risk. |
+
+**The one rule that matters most (Golden Meta-Rule, `.clauderc`-style
+absolute)**:
+
+> If your internal confidence that a planned approach will work on the
+> first real attempt is below ~90%, STOP before writing code. Ask the user
+> exactly one precise, isolated question that resolves the specific blind
+> spot. Do not guess, do not silently pick the more-conservative-sounding
+> option and proceed — ask. Autonomy without this brake is
+> self-destruction.
+
+This composes with `.clauderc` Rule 99 (the main law: 95%+ coverage, no
+architectural blind spots, no ТЗ divergence) and with Rule 1's Blind Spot
+Audit — Rule 8 is the per-iteration discipline; Rule 1 is the periodic
+deep audit; `.clauderc` Rule 99 is the release gate all of it serves.
+
+**Enforcement**: `validation_protocol.md` is the literal checklist; it is
+not optional reading. A task is not "done" until its steps have run and
+`state_journal.md` reflects the result. See `validation_protocol.md`'s
+"Anti-patterns this protocol exists to prevent" table for concrete,
+real incidents from this repo's own history that this Rule closes.
+
 ---
 
 ## Dependencies

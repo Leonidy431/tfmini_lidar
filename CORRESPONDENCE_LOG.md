@@ -194,6 +194,23 @@ Remaining 40 uncovered lines are the `if __name__ == '__main__':` entry guard, a
 
 ---
 
+## Entry 14: 12-expert symposium — autonomy nervous system
+
+**User ask**: Create the artifacts described by a simulated 12-expert symposium (creative designer / skeptic critic / meticulous analyst) on what this project needs for full autonomy: a state journal, a validation protocol, a `.claudeignore`, a `context_map.json`, and a separate document for "99 lifehacks" across 7 selection parameters (context density, determinism, error recovery, state management, token efficiency, tool chaining, sandboxing) plus one golden meta-rule. Part goes into `CLAUDE.md`, the rest into a standalone doc. Follow these rules going forward.
+
+**Outcome**:
+- `state_journal.md`: template + a real first entry documenting this exact iteration (including this session's own container-reset incident from Entry 13, since it's the concrete case study for why this file exists).
+- `validation_protocol.md`: Step 0 (golden meta-rule confidence gate) through Step 4 (commit discipline), with an "Anti-patterns this protocol exists to prevent" table mapping each step directly to a real incident already logged in this repo's history (the config-singleton test leak, the Open3D aliasing bug, the lost coverage files, the `Dockerfile.arm64` `EXPOSE` bug) rather than hypothetical risks.
+- `.claudeignore`: context-window noise filter, explicitly scoped as distinct from `.dockerignore` (build context) — doesn't exclude `tests/`/`docs/`/`*.md`, which Claude legitimately needs to read.
+- `context_map.json`: real dependency graph built from `grep -E '^from app\.' app/*.py` (not placeholder data) — 14 `app/` modules with `depends_on`/`depended_on_by`/`hot_cold` classification, a `web_frontend` section, a `tests_covering` cross-reference built from the actual test-file imports, and the current coverage/deferred-decision snapshot.
+- `AUTONOMY_HACKS.md`: all 99 lifehacks translated and, where possible, tied to a concrete existing pattern in this repo (e.g. "no eval()" references nothing new, but "don't hardcode buffer caps" points at `Scanner3D.max_points`/`DataQualityValidator`'s rolling window as the existing examples to preserve) rather than being generic advice divorced from the codebase.
+- `CLAUDE.md` Rule 8 added: the enforceable summary — what the four files answer, when to touch them, the golden meta-rule verbatim, and how this composes with `.clauderc` Rule 99 and Rule 1's Blind Spot Audit (Rule 8 = per-iteration discipline, Rule 1 = periodic deep audit, `.clauderc` Rule 99 = release gate).
+- `DOCUMENTATION_INDEX.md`: new "Autonomous Agent Nervous System" section with the reading order for a fresh session.
+
+No `app/` code touched; 562/562 tests unaffected (verified after all file creation, not assumed).
+
+---
+
 ## Backlog Integration
 
 The items in this log map onto `DEVELOPMENT_BACKLOG.md` Sprint 1 tasks as follows:
