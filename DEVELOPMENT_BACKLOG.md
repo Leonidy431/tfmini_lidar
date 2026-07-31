@@ -537,6 +537,9 @@ Per-request history and the engineering decisions made while implementing D1/D2/
 - The NED->ENU derivation behind the D1 3D beam projection and why it's not a naive quaternion rotation of the ENU vector
 - Why the D8 EKF uses the Joseph-form covariance update
 - The root cause and fix for a flaky multipath integration test
+- Entry 10-11: Blind Spot Audit R2, all 10 domains (15-24), 84 findings, 19 mechanical fixes applied — see `BLIND_SPOT_AUDIT_R2_FINDINGS.md` for the full table and the NEEDS-DECISION backlog
+- Entry 12-13: the mid-session container-reset incident (branch reverted to the original designated branch, 9 uncommitted coverage-test files lost and recreated), and the coverage push from 71% to 99% (3120 statements, 40 missing) — including two real test-isolation bugs the push surfaced (`Config.slam` shared-singleton leak, an Open3D object-aliasing bug)
+- Entry 14: the autonomous-agent nervous system — `state_journal.md`, `validation_protocol.md`, `.claudeignore`, `context_map.json`, `AUTONOMY_HACKS.md`, wired into `CLAUDE.md` as Rule 8. Read `AUTONOMY_HACKS.md` for the 99-lifehack reference; read `validation_protocol.md`'s "Anti-patterns this protocol exists to prevent" table for how each of the incidents above maps to an enforceable check going forward.
 
 ---
 
