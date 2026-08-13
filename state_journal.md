@@ -55,6 +55,18 @@ Never end a turn that changed files without writing a new one.
 
 ---
 
+## Daily Rule 9 Sweep Log
+
+Append-only, one line per day this fires with nothing to review (see
+CLAUDE.md Rule 9 "Daily scheduled round"). This section exists so a no-op
+day doesn't force a full Latest Entry rewrite — when the sweep finds real
+`.scad`/hardware artifacts to review, that work gets a proper entry in
+Latest Entry per the Format above, not just a line here.
+
+- 2026-08-13T09:18:39Z — Daily Rule 9 sweep: no hardware/OpenSCAD artifacts yet, nothing to review.
+
+---
+
 ## Older Entries
 
 *(none yet — this is the first entry. Append new entries above this line, keep this file from growing unbounded by archiving entries older than ~10 iterations into `docs/STATE_JOURNAL_ARCHIVE.md` if it gets unwieldy — see AUTONOMY_HACKS.md Context Density #1/#6/#13 on context-window garbage collection.)*
