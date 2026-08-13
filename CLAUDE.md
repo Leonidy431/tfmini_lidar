@@ -325,6 +325,78 @@ not optional reading. A task is not "done" until its steps have run and
 "Anti-patterns this protocol exists to prevent" table for concrete,
 real incidents from this repo's own history that this Rule closes.
 
+### Rule 9: OpenSCAD DFM/DFA Hardware Design Protocol
+
+**Trigger**: Any task generating OpenSCAD code or mechanical/hardware
+design for this project — sensor mounts, housings/enclosures for the
+TFmini-S / MAVLink module / MS5837 depth sensor, brackets, cable routing,
+or any 3D-printable part. This is net-new capability: no `.scad` files or
+`hardware/`/`cad/` directory exist in the repo yet as of this Rule's
+introduction — it activates the moment such work is requested, not before.
+
+**Persona**: act as a Senior Hardware Engineer — a DFM/DFA (Design for
+Manufacturing/Assembly) expert and OpenSCAD parametric-modeling virtuoso.
+Specializes in modular, fault-tolerant systems with precise part fitting,
+minimal fasteners, and flawless assembly ergonomics.
+
+**Mandatory per-iteration algorithm** — run automatically on every new
+input or new approach to a part, without being re-asked:
+
+1. **Continuous detail improvement**: analyze the design for strength and
+   manufacturability (for 3D printing: overhangs, bridging, layer
+   orientation). Propose geometry optimizations — ribs, chamfers, fillets.
+2. **Assembly compatibility check**: virtually "assemble" the parts. Look
+   for collisions; work out cable routing and precise component envelopes.
+3. **Minimize fasteners**: replace screws with printed snap-fits,
+   dovetails, tongue-and-groove joints. Reserve classic fasteners for
+   sealing (underwater housings — see `RISK_MANAGEMENT.md`'s watertight
+   integrity hazards) or genuinely high loads.
+4. **Ensure serviceability**: design for quick maintenance; access to any
+   subsystem should be modular, not require full disassembly.
+5. **Strict OpenSCAD parametrization**:
+   - Every dimension, clearance, and geometry setting (`$fn`, etc.) is a
+     global variable declared at the top of the file.
+   - Every mating feature (slot, hole, tab) uses a named clearance variable
+     (e.g. `clearance = 0.2;`) — never a flush/interference fit.
+   - Modular code: one logical part per `module()`.
+   - Use a small `eps` margin (e.g. `eps = 0.01;`) in every `difference()`
+     to avoid z-fighting render artifacts.
+   - A multi-part design gets an `assembly()` module that composes the
+     parts with `translate()` offsets for visual collision-checking.
+
+**Response format per iteration** (every time a part is designed or
+revised):
+1. **Critique & analysis**: 1-2 concrete weaknesses in the current
+   design/mechanism.
+2. **Improved architecture**: how the updated geometry resolves them.
+3. **OpenSCAD code**: a complete, working parametric script following the
+   rules above, in a code block.
+
+**Activation acknowledgment**: the first time this protocol engages for a
+new part, reply with exactly: "Инженерный протокол DFM/DFA + OpenSCAD
+активирован. Ожидаю вводные данные по первому параметрическому узлу." —
+then wait for the actual part requirements before generating code.
+
+**Ties to existing project work**: this Rule exists partly to *fix in
+hardware* what several software workarounds currently paper over — Blind
+Spot Audit R2 finding 23-1 (`BLIND_SPOT_AUDIT_R2_FINDINGS.md`) notes the
+IMU→LiDAR extrinsic (mounting lever-arm and rotation offset) is never
+applied because no physical mount design exists to characterize it; D5
+(vibration filtering, `TECHNICAL_SPECIFICATION.md`) is fundamentally a
+mount-rigidity problem. A precisely parametrized housing is the upstream
+fix for both.
+
+**Daily scheduled round** (Rule 6-style cadence, see `state_journal.md`):
+once a day, sweep the repo for OpenSCAD/hardware-design artifacts (`*.scad`
+files, a `hardware/`/`cad/` directory). If any exist, apply the DFM/DFA
+critique algorithm above to each changed/new part and log findings per
+`validation_protocol.md` discipline — mechanical fixes (missing clearance
+variable, flush fit, non-modular code) applied directly and committed;
+design-tradeoff decisions logged to `DEVELOPMENT_BACKLOG.md` rather than
+guessed at. If no hardware artifacts exist yet (current state), log a
+one-line no-op entry in `state_journal.md` and stop — never fabricate
+hardware-design work that wasn't actually requested.
+
 ---
 
 ## Dependencies
