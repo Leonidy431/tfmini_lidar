@@ -38,8 +38,9 @@ Single entry point into all BLSNS documentation. Grouped by purpose, not by dire
 | [`docs/ALGORITHM_PHYSICS_AUDIT_12PHASE_HLD.md`](docs/ALGORITHM_PHYSICS_AUDIT_12PHASE_HLD.md) | Retrospective application of the Rule 7 12-phase HLD to the original physics-audit fixes (log-space likelihood, ENU heading, regime-change detection) |
 | [`docs/ALGORITHM_DECISION_LOG.md`](docs/ALGORITHM_DECISION_LOG.md) | Per-decision records in the Rule 7 format, plus a reusable template for future decisions |
 | [`TECHNICAL_SPECIFICATION.md`](TECHNICAL_SPECIFICATION.md) | ТЗ for D1-D8 (the 8 deferred decisions): requirements, literature, approach synthesis, specialist voting, and a phase-status table (P7 code vs. P9 hardware-blocked) |
+| [`BLIND_SPOT_99_QA.md`](BLIND_SPOT_99_QA.md) | 99 forward-looking design/policy questions across the 12 Rule-1 domains, each committed to one answer justified by a Rule-7 48-parameter tag; 14 answers surfaced new backlog items, 3 are flagged NEEDS-DECISION |
 
-**Reading order for a new algorithmic decision**: `CLAUDE.md` Rule 7 → `docs/ALGORITHM_DECISION_LOG.md` (see the template at the bottom) → write your own entry there once P1-P12 are complete.
+**Reading order for a new algorithmic decision**: `CLAUDE.md` Rule 7 → `docs/ALGORITHM_DECISION_LOG.md` (see the template at the bottom) → write your own entry there once P1-P12 are complete. For an open design *question* rather than a full decision, check `BLIND_SPOT_99_QA.md` first — it may already be answered.
 
 ---
 

@@ -32,6 +32,23 @@ Never end a turn that changed files without writing a new one.
 
 ## Latest Entry
 
+### 2026-08-16T09:40:00Z — 99 blind-spot Q&A document created
+
+**Phase**: Infrastructure / documentation (cross-cutting, not a numbered backlog sprint)
+**Backlog step completed**: N/A — new artifact requested directly by user, not a pre-planned backlog item; its 14 surfaced answers were themselves logged as new backlog items (see below)
+**Branch / commit**: `claude/physics-engineering-audit` — verify with `git log -1 --oneline` at read time, do not trust this line's staleness
+**Test status**: 562/562 passing (unchanged — docs-only iteration, no `app/` code touched, verified via `python3 -m pytest tests/ -q` before commit per `validation_protocol.md` Step 3)
+**Unresolved issues**:
+- Same standing items as the prior entry below (P9-hardware field validation, CI pipeline priority #1, no PR yet to `main`) — unchanged by this iteration
+- 3 new genuinely-open questions surfaced: `BLIND_SPOT_99_QA.md` Q47 (RPi ARM64 buildability, needs real hardware), Q89 (patent filing strategy, a business decision), Q97 (`clauderc.md` vs `.clauderc` duplication, needs explicit user authorization before touching another party's upload)
+**Files touched this iteration**:
+- `BLIND_SPOT_99_QA.md`: new — 99 questions across the 12 Rule-1 domains, each answered once and tagged with the Rule-7 48-parameter framework field(s) that justified the choice
+- `DOCUMENTATION_INDEX.md`: added a row for the new doc + a reading-order note
+**Next step**: 14 new backlog items were surfaced by this document's answers (see its own Summary table) — none implemented inline, each needs its own `validation_protocol.md` pass. Still recommend CI pipeline (Q42/Q43/`16-3`) as the actual next piece of work, since several of the 14 new items (Q44-Q46) are Docker/CI-adjacent and would benefit from CI existing first to verify them.
+**Confidence in current approach**: High for the 84 inline-answered questions (each grounded in an already-implemented pattern or an already-documented finding in this repo, not invented). Medium-by-design for the 3 flagged NEEDS-DECISION questions — correctly left open rather than guessed, per the golden meta-rule.
+
+---
+
 ### 2026-07-30T00:00:00Z — Autonomy nervous-system artifacts created
 
 **Phase**: Infrastructure (not a numbered backlog sprint — a cross-cutting request to build the autonomy scaffolding itself)

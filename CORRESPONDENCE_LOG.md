@@ -211,6 +211,18 @@ No `app/` code touched; 562/562 tests unaffected (verified after all file creati
 
 ---
 
+## Entry 15: "Напиши 99 вопроса слепых зон... найди один ответ из 99 вариантов по 48 параметрам"
+
+**User ask**: Write 99 blind-spot questions, then for each find one answer using the project's 48-parameter framework.
+
+**Outcome**: `BLIND_SPOT_99_QA.md` — 99 questions across the 12 CLAUDE.md Rule 1 specialist domains (Security 9, Reliability 8, Performance 8, Testing 8, API Design 8, DevOps 9, Documentation 8, Data Quality 8, Concurrency 8, UX/Frontend 8, Patent/IP 8, Compliance 9), each committed to exactly one answer justified by naming the specific Rule-7 48-parameter-matrix field(s) that drove the choice (e.g. `[Robustness: graceful degradation]`) rather than re-running a full 12-phase HLD per question — that machinery stays reserved for decisions large enough to earn `docs/ALGORITHM_DECISION_LOG.md` entries.
+
+Every question and answer is grounded in this repo's actual state (not generic advice) — many extend `BLIND_SPOT_AUDIT_R2_FINDINGS.md`'s still-open NEEDS-DECISION items to an actual decision, others ask genuinely new forward-looking questions. Of the 99: **84 answered inline** with reasoning, **14 surfaced as new backlog items** (scoped but not implemented — each needs its own `validation_protocol.md` pass), and **3 correctly left as NEEDS-DECISION** rather than guessed (Q47: RPi ARM64 buildability, can't be answered honestly without real hardware; Q89: patent filing strategy, a business decision outside engineering scope; Q97: whether to reconcile the owner-uploaded `clauderc.md` with `.clauderc`, which needs the user's explicit authorization since it's someone else's deliberate upload, not this session's own file).
+
+No `app/` code touched; 562/562 tests verified unaffected.
+
+---
+
 ## Backlog Integration
 
 The items in this log map onto `DEVELOPMENT_BACKLOG.md` Sprint 1 tasks as follows:
