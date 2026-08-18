@@ -315,6 +315,25 @@ class TestScanner:
         assert client.post("/api/scanner/start", headers=AUTH,
                            json={"initial_z": "x"}).status_code == 400
 
+    def test_start_rejects_non_finite_center(self, client):
+        """Regression test for Blind Spot Audit R3 R3-SEC-8: isinstance
+        check alone accepts NaN/Infinity (Python's json module parses those
+        non-standard literals by default), silently poisoning the
+        accumulated point cloud / saved map bounds."""
+        for bad_center in (
+            [float('nan'), 0.0, 0.0],
+            [0.0, float('inf'), 0.0],
+            [0.0, 0.0, float('-inf')],
+        ):
+            r = client.post("/api/scanner/start", headers=AUTH,
+                            json={"center": bad_center})
+            assert r.status_code == 400, bad_center
+
+    def test_start_rejects_non_finite_initial_z(self, client):
+        r = client.post("/api/scanner/start", headers=AUTH,
+                        json={"initial_z": float('nan')})
+        assert r.status_code == 400
+
     def test_stop_status_points_clear(self, client):
         client.post("/api/scanner/start", headers=AUTH, json={})
         assert client.post("/api/scanner/stop", headers=AUTH).get_json()["success"]
@@ -374,6 +393,26 @@ class TestWebSocket:
         c.emit("get_map_points")
         assert any(m["name"] == "map_points" for m in c.get_received())
         c.disconnect()
+
+
+class TestRequestSizeLimit:
+    """Regression test for Blind Spot Audit R3 R3-SEC-7: no
+    MAX_CONTENT_LENGTH was set, so any POST route would buffer an
+    arbitrarily large body into memory before parsing."""
+
+    def test_max_content_length_configured(self):
+        assert app.config.get("MAX_CONTENT_LENGTH") is not None
+        assert app.config["MAX_CONTENT_LENGTH"] <= 4 * 1024 * 1024
+
+    def test_oversized_body_rejected(self, client):
+        limit = app.config["MAX_CONTENT_LENGTH"]
+        oversized = b"{" + b'"description": "' + b"x" * (limit + 1024) + b'"}'
+        r = client.post(
+            "/api/maps/some-map/save",
+            headers={**AUTH, "Content-Type": "application/json"},
+            data=oversized,
+        )
+        assert r.status_code == 413
 
 
 if __name__ == "__main__":

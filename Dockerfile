@@ -27,6 +27,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+# Unbuffered stdout/stderr so the last log lines aren't lost if the
+# container is OOM-killed or SIGKILLed after a hung SIGTERM -- `docker logs`
+# would otherwise be misleading during exactly the incidents an operator
+# needs it most for (Blind Spot Audit R3, R3-DEVOPS-5).
+ENV PYTHONUNBUFFERED=1
+
 # Install prebuilt wheels
 COPY requirements.txt .
 COPY --from=builder /wheels /wheels

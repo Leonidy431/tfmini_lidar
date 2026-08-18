@@ -32,6 +32,38 @@ Never end a turn that changed files without writing a new one.
 
 ## Latest Entry
 
+### 2026-08-17T00:00:00Z — Blind Spot Audit Round 3: 96 findings, 28 fixed with tests
+
+**Phase**: Blind Spot Audit Round 3 (cross-cutting, all 12 CLAUDE.md Rule 1 domains)
+**Backlog step completed**: New `DEVELOPMENT_BACKLOG.md` Section 8 created; CI pipeline (Section 6/7's standing #1 priority since R2) closed as part of this pass
+**Branch / commit**: `claude/physics-engineering-audit` — verify with `git log -1 --oneline` at read time
+**Test status**: 582/582 passing (562 baseline + 20 new regression tests), 99% coverage (3175 statements, 44 missing), stable across 3 repeated runs
+**Unresolved issues**:
+- 68 of 96 R3 findings remain logged (not implemented) in `DEVELOPMENT_BACKLOG.md` Section 8, grouped by domain
+- 1 explicit NEEDS-DECISION flagged to the user, not acted on: R3-IP-1 — `PATENT.md`'s claim disclosure appears to be in a public GitHub repo, risking trade-secret/bar-date loss; this is a business/legal call
+- 2 finding clusters deliberately deferred as a coordinated redesign rather than patched piecemeal: pipeline ordering (R3-PERF-1 CRITICAL + R3-DQ-4 — data-quality/multipath filtering runs on the wrong thread AND the wrong pre-correction signal) and detector permanent-freeze (R3-DQ-6 + R3-TEST-4)
+- Same standing hardware-blocked P9 field-validation items as prior entries, unchanged
+**Files touched this iteration**:
+- `BLIND_SPOT_AUDIT_R3_FINDINGS.md`: new — full 96-finding table across 12 domains with fix status
+- `app/main.py`: MAVLink attitude start/stop wiring (R3-REL-1), Werkzeug debugger decoupling (R3-SEC-1), MAX_CONTENT_LENGTH, scanner NaN/Inf validation (R3-SEC-8), set_mode() lock (R3-TEST-2/CONC-5), SIGTERM handler (R3-DEVOPS-2)
+- `app/config.py`: `ALLOW_WERKZEUG_DEBUGGER` flag
+- `app/security.py`: `RateLimiter` lock (R3-SEC-2/CONC-3)
+- `app/data_quality.py`: `_decisions`/`quality_score` lock (R3-CONC-1)
+- `app/lidar_driver.py`: `readings_history` lock (R3-CONC-2)
+- `app/slam_engine.py`: `get_statistics()` lock (R3-CONC-4)
+- `app/ekf_3d_attitude.py`: NaN/Inf input guard on `update_position`/`update_attitude` (R3-TEST-1)
+- `app/localization.py`, `app/scanner_3d.py`: redundant-computation perf fixes (R3-PERF-5/6)
+- `app/web/static/js/app.js`: distance-gauge scaling fix (R3-UX-6)
+- `Dockerfile`: `PYTHONUNBUFFERED=1` (R3-DEVOPS-5)
+- `.github/workflows/ci.yml`: new — pytest+coverage-gate, Dockerfile build, Dockerfile.arm64 syntax check (R3-DEVOPS-1)
+- `requirements.txt`: added `pytest-cov` (previously undeclared despite being used)
+- `CLAUDE.md`, `RISK_MANAGEMENT.md`, `LICENSES.md`, `DOCUMENTATION_INDEX.md`, `TECHNICAL_SPECIFICATION.md`, `DEVELOPMENT_BACKLOG.md`, `CORRESPONDENCE_LOG.md`: doc-sync fixes and backlog logging (R3-DOC-1/4/5, R3-COMP-4/5/6, R3-IP-6/7)
+- `tests/test_security.py`, `tests/test_ekf_3d_attitude.py`, `tests/test_main_internals.py`, `tests/test_api_routes.py`, `tests/test_data_quality.py`, `tests/test_driver_mock.py`, `tests/test_slam_physics.py`: 20 new regression tests, one per mechanical fix
+**Next step**: The pipeline-ordering cluster (R3-PERF-1/R3-DQ-4) is the highest-value remaining item — it affects real-time correctness and data quality simultaneously in code already shipped/default-enabled. Needs a dedicated session since it requires redesigning where filtering happens, not a one-line patch. Separately, R3-IP-1 needs the user's explicit read/decision before any further Patent/IP-domain work proceeds.
+**Confidence in current approach**: High for all 28 fixes (each grounded in an actual file:line read by a specialist agent, verified again before editing, with a regression test proving the specific failure mode is closed). Correctly did NOT touch R3-IP-1 (repo visibility / patent filing is outside engineering authority) or the two architectural clusters (a rushed fix there would just relocate the bug) — per the golden meta-rule.
+
+---
+
 ### 2026-08-16T09:40:00Z — 99 blind-spot Q&A document created
 
 **Phase**: Infrastructure / documentation (cross-cutting, not a numbered backlog sprint)

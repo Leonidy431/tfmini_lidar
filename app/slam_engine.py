@@ -465,32 +465,40 @@ class SLAMEngine:
 
     def get_statistics(self) -> dict:
         """Get engine statistics"""
-        has_bounds = bool(np.all(np.isfinite(self.map_bounds['min']))
-                          and np.all(np.isfinite(self.map_bounds['max'])))
-        bounds_min = self.map_bounds['min'] if has_bounds else np.zeros(3)
-        bounds_max = self.map_bounds['max'] if has_bounds else np.zeros(3)
+        # Unlike every sibling accessor (get_map/get_trajectory/
+        # get_map_downsampled), this method previously read current_pose,
+        # map_bounds, scan_buffer, and total_points with no lock, while
+        # add_point() mutates all of them in place on the worker thread -
+        # an inconsistent snapshot (bounds vs. point count from different
+        # instants) could reach a persisted map's metadata via save_map().
+        # (Blind Spot Audit R3, R3-CONC-4)
+        with self.lock:
+            has_bounds = bool(np.all(np.isfinite(self.map_bounds['min']))
+                              and np.all(np.isfinite(self.map_bounds['max'])))
+            bounds_min = self.map_bounds['min'] if has_bounds else np.zeros(3)
+            bounds_max = self.map_bounds['max'] if has_bounds else np.zeros(3)
 
-        return {
-            'total_points': self.total_points,
-            'total_scans': self.total_scans,
-            'buffer_size': len(self.scan_buffer),
-            # Accumulated registration-error proxy (grows with mission
-            # length), NOT the last per-scan displacement -- see
-            # last_displacement for that (Physics Audit: drift semantics).
-            'drift_estimate': round(self.drift_estimate, 4),
-            'last_displacement': round(self.last_displacement, 4),
-            'current_position': {
-                'x': round(self.current_pose[0, 3], 3),
-                'y': round(self.current_pose[1, 3], 3),
-                'z': round(self.current_pose[2, 3], 3)
-            },
-            'map_bounds': {
-                'min': bounds_min.tolist(),
-                'max': bounds_max.tolist()
-            },
-            'map_size': {
-                'x': round(bounds_max[0] - bounds_min[0], 2),
-                'y': round(bounds_max[1] - bounds_min[1], 2),
-                'z': round(bounds_max[2] - bounds_min[2], 2)
-            } if has_bounds else {'x': 0, 'y': 0, 'z': 0}
-        }
+            return {
+                'total_points': self.total_points,
+                'total_scans': self.total_scans,
+                'buffer_size': len(self.scan_buffer),
+                # Accumulated registration-error proxy (grows with mission
+                # length), NOT the last per-scan displacement -- see
+                # last_displacement for that (Physics Audit: drift semantics).
+                'drift_estimate': round(self.drift_estimate, 4),
+                'last_displacement': round(self.last_displacement, 4),
+                'current_position': {
+                    'x': round(self.current_pose[0, 3], 3),
+                    'y': round(self.current_pose[1, 3], 3),
+                    'z': round(self.current_pose[2, 3], 3)
+                },
+                'map_bounds': {
+                    'min': bounds_min.tolist(),
+                    'max': bounds_max.tolist()
+                },
+                'map_size': {
+                    'x': round(bounds_max[0] - bounds_min[0], 2),
+                    'y': round(bounds_max[1] - bounds_min[1], 2),
+                    'z': round(bounds_max[2] - bounds_min[2], 2)
+                } if has_bounds else {'x': 0, 'y': 0, 'z': 0}
+            }

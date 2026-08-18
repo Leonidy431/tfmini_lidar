@@ -69,6 +69,37 @@ class TestStartStop:
         app.driver.start.side_effect = RuntimeError("boom")
         assert app.start() is False
 
+    def test_start_calls_mavlink_attitude_start(self):
+        """Regression test for Blind Spot Audit R3 R3-REL-1:
+        MAVLinkAttitudeReader.start()/.stop() were never called anywhere in
+        main.py, so D1 3D-attitude fusion was a silent no-op even when
+        explicitly enabled."""
+        app = LiDARSLAMApplication()
+        fake_driver = MagicMock()
+        fake_driver.connect.return_value = True
+        fake_mavlink = MagicMock()
+        fake_mavlink.start.return_value = True
+        app.mavlink_attitude = fake_mavlink
+        with patch('app.main.TFminiSDriver', return_value=fake_driver):
+            assert app.start() is True
+        fake_mavlink.start.assert_called_once()
+        app.stop()
+        fake_mavlink.stop.assert_called_once()
+
+    def test_start_continues_when_mavlink_attitude_fails(self):
+        """start() must degrade gracefully (1D heading only) rather than
+        aborting the whole application when the MAVLink source fails."""
+        app = LiDARSLAMApplication()
+        fake_driver = MagicMock()
+        fake_driver.connect.return_value = True
+        fake_mavlink = MagicMock()
+        fake_mavlink.start.return_value = False
+        fake_mavlink.last_error = "connection refused"
+        app.mavlink_attitude = fake_mavlink
+        with patch('app.main.TFminiSDriver', return_value=fake_driver):
+            assert app.start() is True
+        assert app.is_running is True
+
 
 class TestDriverErrorSafety:
     def test_sensor_failure_forces_idle_and_alarms(self):
@@ -216,6 +247,26 @@ class TestSetModeTransitions:
         app.set_mode(app.MODE_IDLE)
         assert app.scanner.is_scanning is False
 
+    def test_concurrent_set_mode_calls_do_not_skip_cleanup(self):
+        """Regression test for Blind Spot Audit R3 R3-TEST-2/R3-CONC-5:
+        set_mode()'s read-check-transition-write sequence had no lock
+        spanning it, so two threads racing here could both observe a stale
+        self.mode and one transition's cleanup (stop_recording/
+        stop_navigation/stop_scan) would silently never run."""
+        import concurrent.futures
+
+        app = LiDARSLAMApplication()
+        app.profile_recorder.start_recording("p", "d")
+        app.set_mode(app.MODE_RECORDING)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(app.set_mode, app.MODE_IDLE) for _ in range(2)]
+            for f in futures:
+                f.result()
+
+        assert app.profile_recorder.is_recording is False
+        assert app.mode == app.MODE_IDLE
+
 
 class TestWsAuthConnect:
     def test_connect_rejected_without_token(self):
@@ -247,6 +298,65 @@ class TestMainEntry:
              patch.object(main_mod.socketio, "run") as mock_run:
             main_mod.main()
             mock_run.assert_called_once()
+
+    def test_main_registers_sigterm_handler(self):
+        """Regression test for Blind Spot Audit R3 R3-DEVOPS-2: Docker's
+        default SIGTERM previously hit Python's default handler and killed
+        the process with no chance to close the UART port or flush
+        in-progress state."""
+        import signal as signal_mod
+        with patch.object(main_mod.lidar_app, "initialize", return_value=True), \
+             patch.object(main_mod, "init_default_token", return_value="tok"), \
+             patch.object(main_mod.socketio, "run"):
+            main_mod.main()
+            assert signal_mod.getsignal(signal_mod.SIGTERM) is main_mod._handle_shutdown_signal
+
+    def test_shutdown_signal_handler_stops_app_and_exits(self):
+        with patch.object(main_mod.lidar_app, "stop") as mock_stop:
+            with pytest.raises(SystemExit):
+                main_mod._handle_shutdown_signal(15, None)
+            mock_stop.assert_called_once()
+
+    def test_shutdown_signal_handler_exits_even_if_stop_raises(self):
+        """Shutdown must still terminate the process even if stop() itself
+        errors -- must not hang past the container's stop grace period."""
+        with patch.object(main_mod.lidar_app, "stop", side_effect=RuntimeError("boom")):
+            with pytest.raises(SystemExit):
+                main_mod._handle_shutdown_signal(15, None)
+
+
+class TestWerkzeugDebuggerGate:
+    """Regression tests for Blind Spot Audit R3 R3-SEC-1: the Werkzeug
+    interactive debugger (allow_unsafe_werkzeug) was previously tied to the
+    same DEBUG flag as app logging, and WEB_HOST defaults to 0.0.0.0 --
+    setting DEBUG=true for field troubleshooting would expose unauthenticated
+    RCE to the whole LAN."""
+
+    def test_debugger_disabled_by_default(self):
+        with patch.object(main_mod.lidar_app, "initialize", return_value=True), \
+             patch.object(main_mod, "init_default_token", return_value="tok"), \
+             patch.object(main_mod.Config, "ALLOW_WERKZEUG_DEBUGGER", False), \
+             patch.object(main_mod.socketio, "run") as mock_run:
+            main_mod.main()
+            assert mock_run.call_args.kwargs["allow_unsafe_werkzeug"] is False
+
+    def test_debugger_refused_when_host_not_loopback(self):
+        with patch.object(main_mod.lidar_app, "initialize", return_value=True), \
+             patch.object(main_mod, "init_default_token", return_value="tok"), \
+             patch.object(main_mod.Config, "ALLOW_WERKZEUG_DEBUGGER", True), \
+             patch.object(main_mod.Config, "WEB_HOST", "0.0.0.0"), \
+             patch.object(main_mod.socketio, "run") as mock_run:
+            main_mod.main()
+            assert mock_run.call_args.kwargs["allow_unsafe_werkzeug"] is False
+
+    def test_debugger_enabled_when_explicitly_opted_in_and_loopback(self):
+        with patch.object(main_mod.lidar_app, "initialize", return_value=True), \
+             patch.object(main_mod, "init_default_token", return_value="tok"), \
+             patch.object(main_mod.Config, "ALLOW_WERKZEUG_DEBUGGER", True), \
+             patch.object(main_mod.Config, "WEB_HOST", "127.0.0.1"), \
+             patch.object(main_mod.socketio, "run") as mock_run:
+            main_mod.main()
+            assert mock_run.call_args.kwargs["allow_unsafe_werkzeug"] is True
 
 
 if __name__ == "__main__":

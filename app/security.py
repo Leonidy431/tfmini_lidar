@@ -12,6 +12,7 @@ import re
 import os
 import hashlib
 import secrets
+import threading
 import time
 import logging
 from functools import wraps
@@ -23,6 +24,13 @@ logger = logging.getLogger(__name__)
 # Token storage (in production, use Redis or database)
 API_TOKENS = {}
 RATE_LIMIT_STORE = {}
+# Guards all read-modify-write access to RATE_LIMIT_STORE. Without it,
+# concurrent requests from the same client_id can race on the same "recent"
+# snapshot and each independently pass the limit check (bypassing the rate
+# limit), and the eviction loop can raise "dictionary changed size during
+# iteration" against a concurrent new-client insert.
+# (Blind Spot Audit R3, R3-SEC-2 / R3-CONC-3)
+_RATE_LIMIT_LOCK = threading.Lock()
 
 
 def generate_api_token() -> str:
@@ -103,24 +111,25 @@ class RateLimiter:
         """Check if client is within rate limit"""
         now = time.time()
 
-        recent = [ts for ts in RATE_LIMIT_STORE.get(client_id, []) if now - ts < self.window]
+        with _RATE_LIMIT_LOCK:
+            recent = [ts for ts in RATE_LIMIT_STORE.get(client_id, []) if now - ts < self.window]
 
-        if len(recent) >= self.rpm:
+            if len(recent) >= self.rpm:
+                RATE_LIMIT_STORE[client_id] = recent
+                return False
+
+            recent.append(now)
             RATE_LIMIT_STORE[client_id] = recent
-            return False
 
-        recent.append(now)
-        RATE_LIMIT_STORE[client_id] = recent
-
-        # Opportunistic eviction: drop keys whose window has fully expired so
-        # the store tracks only currently-active clients. Bounded work per
-        # call when the store grows past the cap.
-        if len(RATE_LIMIT_STORE) > self.MAX_TRACKED_CLIENTS:
-            expired = [cid for cid, tss in RATE_LIMIT_STORE.items()
-                       if not tss or (now - tss[-1]) >= self.window]
-            for cid in expired:
-                RATE_LIMIT_STORE.pop(cid, None)
-        return True
+            # Opportunistic eviction: drop keys whose window has fully expired
+            # so the store tracks only currently-active clients. Bounded work
+            # per call when the store grows past the cap.
+            if len(RATE_LIMIT_STORE) > self.MAX_TRACKED_CLIENTS:
+                expired = [cid for cid, tss in RATE_LIMIT_STORE.items()
+                           if not tss or (now - tss[-1]) >= self.window]
+                for cid in expired:
+                    RATE_LIMIT_STORE.pop(cid, None)
+            return True
 
 
 rate_limiter = RateLimiter(requests_per_minute=120)

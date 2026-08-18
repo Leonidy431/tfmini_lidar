@@ -110,6 +110,40 @@ class TestRateLimiter:
         assert limiter.is_allowed("c1") is True
         assert limiter.is_allowed("c2") is True
 
+    def test_concurrent_requests_never_exceed_limit(self):
+        """Regression test for Blind Spot Audit R3 R3-SEC-2/R3-CONC-3: the
+        read-modify-write in is_allowed() was unguarded, so concurrent
+        requests from the same client could both read the same pre-append
+        snapshot and both pass the limit check, bypassing rate limiting."""
+        import concurrent.futures
+
+        limiter = RateLimiter(requests_per_minute=20)
+        cid = "concurrent-client"
+        n_requests = 60
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
+            results = list(pool.map(lambda _: limiter.is_allowed(cid), range(n_requests)))
+
+        accepted = sum(1 for r in results if r)
+        assert accepted == limiter.rpm
+
+    def test_concurrent_new_clients_do_not_raise_during_eviction(self):
+        """Regression test for R3-CONC-3: the eviction loop iterated
+        RATE_LIMIT_STORE.items() while another thread could insert a new
+        key, raising 'dictionary changed size during iteration'."""
+        import concurrent.futures
+
+        limiter = RateLimiter(requests_per_minute=100)
+        limiter.MAX_TRACKED_CLIENTS = 5  # force the eviction path to run
+
+        def hit(i):
+            return limiter.is_allowed(f"evict-client-{i}")
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
+            results = list(pool.map(hit, range(50)))
+
+        assert all(r is True for r in results)
+
 
 class TestPublicRoutes:
     def test_public(self):

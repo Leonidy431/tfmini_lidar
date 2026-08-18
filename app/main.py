@@ -6,8 +6,10 @@ Integrates all modules and provides REST API for web interface.
 
 import logging
 import logging.handlers
+import math
 import os
 import queue
+import signal
 import threading
 import time
 import numpy as np
@@ -279,6 +281,18 @@ class LiDARSLAMApplication:
         try:
             self._start_processing_thread()
             self.driver.start()
+            if self.mavlink_attitude is not None:
+                # start() degrades gracefully (returns False, logs) if
+                # pymavlink is unavailable or the connection fails - D1 falls
+                # back to 1D heading. Previously never called at all, so D1
+                # was a silent no-op even when explicitly enabled.
+                # (Blind Spot Audit R3, R3-REL-1)
+                if not self.mavlink_attitude.start():
+                    logger.warning(
+                        "MAVLink attitude source failed to start: %s "
+                        "(continuing with 1D heading only)",
+                        self.mavlink_attitude.last_error
+                    )
             self.is_running = True
             logger.info("Application started")
             return True
@@ -293,6 +307,9 @@ class LiDARSLAMApplication:
 
         if self.driver:
             self.driver.stop()
+
+        if self.mavlink_attitude is not None:
+            self.mavlink_attitude.stop()
 
         self._stop_processing_thread()
 
@@ -341,20 +358,31 @@ class LiDARSLAMApplication:
             logger.error(f"Invalid mode: {mode}")
             return False
 
-        # Handle mode transitions
-        if self.mode == self.MODE_RECORDING and mode != self.MODE_RECORDING:
-            # Stop recording
-            self.profile_recorder.stop_recording()
+        # The read-check-transition-write sequence below must be atomic:
+        # two Flask request threads racing here (e.g. a stop route
+        # interleaved with a start route) could otherwise both read the
+        # same stale self.mode and one transition's cleanup (stop_recording/
+        # stop_navigation/stop_scan) would silently never run, orphaning an
+        # active recording/navigation/scan while self.mode claims it
+        # transitioned cleanly. _state_lock is an RLock so this composes
+        # safely with the mode property's own locking.
+        # (Blind Spot Audit R3, R3-TEST-2 / R3-CONC-5)
+        with self._state_lock:
+            # Handle mode transitions
+            if self.mode == self.MODE_RECORDING and mode != self.MODE_RECORDING:
+                # Stop recording
+                self.profile_recorder.stop_recording()
 
-        if self.mode == self.MODE_NAVIGATING and mode != self.MODE_NAVIGATING:
-            # Stop navigation
-            self.profile_navigator.stop_navigation()
+            if self.mode == self.MODE_NAVIGATING and mode != self.MODE_NAVIGATING:
+                # Stop navigation
+                self.profile_navigator.stop_navigation()
 
-        if self.mode == self.MODE_SCANNING and mode != self.MODE_SCANNING:
-            # Stop the 3D scan (data is kept until cleared/saved)
-            self.scanner.stop_scan()
+            if self.mode == self.MODE_SCANNING and mode != self.MODE_SCANNING:
+                # Stop the 3D scan (data is kept until cleared/saved)
+                self.scanner.stop_scan()
 
-        self.mode = mode
+            self.mode = mode
+
         logger.info(f"Mode changed to: {mode}")
         return True
 
@@ -781,6 +809,13 @@ class LiDARSLAMApplication:
 app = Flask(__name__,
            template_folder='web/templates',
            static_folder='web/static')
+
+# Bound request body size so a POST to any JSON route can't buffer an
+# arbitrarily large body into memory before parsing (Blind Spot Audit R3,
+# R3-SEC-7). 2 MB comfortably covers the largest legitimate payload (a
+# scanner/map save's JSON metadata; point-cloud data itself is written to
+# disk via MapManager, not posted as JSON).
+app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024
 
 # Restricted CORS - only allow same-origin and BlueOS hosts. Strip each
 # entry so `CORS_ORIGINS=a, b` doesn't silently yield a never-matching ' b'
@@ -1254,8 +1289,12 @@ def scanner_start():
 
     center = data.get('center', [0.0, 0.0, 0.0])
     if (not isinstance(center, (list, tuple)) or len(center) != 3
-            or not all(isinstance(v, (int, float)) for v in center)):
-        return jsonify({'success': False, 'error': 'center must be [x, y, z]'}), 400
+            or not all(isinstance(v, (int, float)) and math.isfinite(v) for v in center)):
+        # isinstance((int, float)) alone accepts NaN/Infinity - Python's json
+        # module parses those non-standard literals by default, and either
+        # would silently poison the accumulated point cloud / saved map
+        # bounds (Blind Spot Audit R3, R3-SEC-8).
+        return jsonify({'success': False, 'error': 'center must be [x, y, z] of finite numbers'}), 400
 
     orbit_radius = data.get('orbit_radius')
     if orbit_radius is not None:
@@ -1271,6 +1310,8 @@ def scanner_start():
         initial_z = float(data.get('initial_z', 0.0))
     except (TypeError, ValueError):
         return jsonify({'success': False, 'error': 'Invalid initial_z'}), 400
+    if not math.isfinite(initial_z):
+        return jsonify({'success': False, 'error': 'initial_z must be finite'}), 400
 
     if not lidar_app.scanner.start_scan(center=tuple(center),
                                         orbit_radius=orbit_radius,
@@ -1423,9 +1464,25 @@ _register_versioned_aliases()
 
 # ============ Main Entry Point ============
 
+def _handle_shutdown_signal(signum, frame):
+    """Close the UART port and flush in-progress state before the process
+    dies. Docker's default stop signal is SIGTERM with a ~10s grace period;
+    without this handler, Python's default SIGTERM behavior kills the
+    process immediately, risking a corrupted map file or a serial port left
+    in a bad state on container restart (Blind Spot Audit R3, R3-DEVOPS-2)."""
+    logger.info("Received signal %s, shutting down gracefully...", signum)
+    try:
+        lidar_app.stop()
+    except Exception as exc:
+        logger.error("Error during graceful shutdown: %s", exc)
+    raise SystemExit(0)
+
+
 def main():
     """Main entry point"""
     logger.info("Starting BlueOS LiDAR SLAM Extension...")
+
+    signal.signal(signal.SIGTERM, _handle_shutdown_signal)
 
     # Initialize API token
     api_token = init_default_token()
@@ -1436,18 +1493,35 @@ def main():
         logger.warning("LiDAR initialization failed - running in demo mode")
 
     # Run Flask server with SocketIO.
-    # allow_unsafe_werkzeug is only permitted in DEBUG; production deployments
-    # should front this with a proper WSGI server (see DEPLOYMENT.md /
-    # docker-compose gunicorn command). Never ship with DEBUG=true.
+    # The Werkzeug debugger (allow_unsafe_werkzeug) is a SEPARATE opt-in from
+    # DEBUG (app logging verbosity) — see Config.ALLOW_WERKZEUG_DEBUGGER.
+    # DEBUG=true alone must never enable remote code execution just because
+    # an operator wants verbose logs for field troubleshooting while
+    # WEB_HOST is 0.0.0.0 (Blind Spot Audit R3, R3-SEC-1).
     if Config.DEBUG:
         logger.warning("DEBUG mode is ON - do not use in production")
+
+    werkzeug_debugger = Config.ALLOW_WERKZEUG_DEBUGGER
+    if werkzeug_debugger and Config.WEB_HOST not in ("127.0.0.1", "localhost", "::1"):
+        logger.error(
+            "ALLOW_WERKZEUG_DEBUGGER=true refused: WEB_HOST=%s is not loopback. "
+            "The Werkzeug debugger allows remote code execution and will not "
+            "be enabled while the server is reachable off-host.",
+            Config.WEB_HOST
+        )
+        werkzeug_debugger = False
+    elif werkzeug_debugger:
+        logger.warning(
+            "Werkzeug interactive debugger is ENABLED (loopback-only) - "
+            "never set ALLOW_WERKZEUG_DEBUGGER=true in production"
+        )
 
     socketio.run(
         app,
         host=Config.WEB_HOST,
         port=Config.WEB_PORT,
         debug=Config.DEBUG,
-        allow_unsafe_werkzeug=Config.DEBUG
+        allow_unsafe_werkzeug=werkzeug_debugger
     )
 
 

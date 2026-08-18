@@ -1,0 +1,67 @@
+name: CI
+
+# Standing #1 priority from Blind Spot Audit Round 2 (finding 16-3) and
+# Round 3 (finding R3-DEVOPS-1): nothing ran `pytest` or `docker build` on a
+# PR before this existed, which is exactly how the Dockerfile.arm64 EXPOSE
+# parse bug (R2 15-2) shipped broken and went unnoticed.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Test + Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests with coverage
+        run: |
+          python -m pytest tests/ -v --cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=95
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          retention-days: 14
+
+  docker-build:
+    name: Build primary Dockerfile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -f Dockerfile -t blueos-lidar-slam:ci .
+
+  docker-arm64-syntax:
+    name: Syntax-check Dockerfile.arm64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Full build pulls a multi-GB NVIDIA L4T base image and needs ARM64
+      # emulation -- too slow/expensive for every PR. --check validates
+      # Dockerfile syntax (this is exactly what would have caught R2 15-2's
+      # inline-comment-on-EXPOSE parse error) without executing the build.
+      - name: Syntax check
+        run: docker buildx build --check -f Dockerfile.arm64 .

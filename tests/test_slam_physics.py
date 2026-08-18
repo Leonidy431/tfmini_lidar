@@ -17,6 +17,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.slam_engine import SLAMEngine
+from app.config import SLAMConfig
 
 
 def rotated_ring(n=200, radius=3.0, z=0.0, seed=0):
@@ -220,6 +221,42 @@ class TestDriftSemantics:
         engine = SLAMEngine()
         assert hasattr(engine, 'last_displacement')
         assert engine.last_displacement == 0.0
+
+
+class TestGetStatisticsThreadSafety:
+    def test_concurrent_add_point_and_get_statistics(self):
+        """Regression test for Blind Spot Audit R3 R3-CONC-4:
+        get_statistics() was the only SLAMEngine method that never
+        acquired self.lock, unlike every sibling accessor
+        (get_map/get_trajectory/get_map_downsampled) -- an inconsistent
+        snapshot (bounds vs. point count from different instants) could
+        reach a persisted map's metadata via save_map()."""
+        import concurrent.futures
+
+        engine = SLAMEngine(SLAMConfig(buffer_size=10_000))
+        errors = []
+
+        def writer():
+            rng = np.random.default_rng(7)
+            for _ in range(500):
+                x, y, z = rng.uniform(-5, 5, 3)
+                engine.add_point(float(x), float(y), float(z))
+
+        def reader():
+            for _ in range(500):
+                try:
+                    stats = engine.get_statistics()
+                    assert 'total_points' in stats
+                    assert 'map_bounds' in stats
+                except Exception as exc:  # noqa: BLE001 - want to catch anything torn-state related
+                    errors.append(exc)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+            futures = [pool.submit(writer), pool.submit(reader), pool.submit(reader)]
+            for f in futures:
+                f.result()
+
+        assert errors == []
 
 
 if __name__ == '__main__':

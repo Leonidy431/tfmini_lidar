@@ -95,33 +95,56 @@ class EKF3DAttitude:
         self._symmetrize()
         self.predict_count += 1
 
-    def update_position(self, position_xyz):
+    def update_position(self, position_xyz) -> bool:
         """position_xyz: (x, y, z) from LiDAR/SLAM, in the same world frame
-        as the EKF state."""
+        as the EKF state. Returns False (no-op) on a non-finite input."""
+        z = np.asarray(position_xyz, dtype=float)
+        if not np.all(np.isfinite(z)):
+            # A degenerate SLAM/localization result feeding this call would
+            # otherwise poison self.state/self.covariance with NaN
+            # permanently -- no subsequent predict/update recovers, since
+            # NaN propagates through every further matrix op.
+            # (Blind Spot Audit R3, R3-TEST-1)
+            self.skipped_singular_updates += 1
+            logger.warning("EKF position update skipped: non-finite input %s", position_xyz)
+            return False
+
         H = np.zeros((3, STATE_DIM))
         H[0, IDX_X] = 1.0
         H[1, IDX_Y] = 1.0
         H[2, IDX_Z] = 1.0
 
-        z = np.asarray(position_xyz, dtype=float)
         innovation = z - H @ self.state
         if self._kalman_update(H, innovation, self.R_position):
             self.position_update_count += 1
+            return True
+        return False
 
-    def update_attitude(self, roll: float, pitch: float, yaw: float):
-        """roll/pitch/yaw in radians, e.g. from MAVLinkAttitudeReader."""
+    def update_attitude(self, roll: float, pitch: float, yaw: float) -> bool:
+        """roll/pitch/yaw in radians, e.g. from MAVLinkAttitudeReader.
+        Returns False (no-op) on a non-finite input."""
+        z = np.array([roll, pitch, yaw])
+        if not np.all(np.isfinite(z)):
+            # Same NaN-poisoning hazard as update_position.
+            # (Blind Spot Audit R3, R3-TEST-1)
+            self.skipped_singular_updates += 1
+            logger.warning("EKF attitude update skipped: non-finite input (%s, %s, %s)",
+                            roll, pitch, yaw)
+            return False
+
         H = np.zeros((3, STATE_DIM))
         H[0, IDX_ROLL] = 1.0
         H[1, IDX_PITCH] = 1.0
         H[2, IDX_YAW] = 1.0
 
-        z = np.array([roll, pitch, yaw])
         predicted = H @ self.state
         innovation = np.array([wrap_angle(z[i] - predicted[i]) for i in range(3)])
         if self._kalman_update(H, innovation, self.R_attitude):
             for idx in ANGLE_INDICES:
                 self.state[idx] = wrap_angle(self.state[idx])
             self.attitude_update_count += 1
+            return True
+        return False
 
     def _kalman_update(self, H: np.ndarray, innovation: np.ndarray, R: np.ndarray) -> bool:
         """Returns True if the update was applied, False if skipped due to

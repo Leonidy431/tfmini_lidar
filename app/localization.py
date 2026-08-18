@@ -301,6 +301,9 @@ class LocalizationEngine:
                 sum(self.confidence_history) / len(self.confidence_history)
                 if self.confidence_history else 0
             )
+            # Computed once instead of 3x under the same lock ICP needs
+            # (Blind Spot Audit R3, R3-PERF-5).
+            roll, pitch, yaw = self._pose_to_euler(self.current_pose)
 
             return {
                 'initialized': self.is_initialized,
@@ -316,9 +319,9 @@ class LocalizationEngine:
                     'z': round(self.current_pose[2, 3], 3)
                 },
                 'orientation': {
-                    'roll': self._pose_to_euler(self.current_pose)[0],
-                    'pitch': self._pose_to_euler(self.current_pose)[1],
-                    'yaw': self._pose_to_euler(self.current_pose)[2]
+                    'roll': roll,
+                    'pitch': pitch,
+                    'yaw': yaw
                 },
                 'buffer_size': len(self.scan_buffer),
                 'history_size': len(self.pose_history)

@@ -295,6 +295,40 @@ class TestStatistics:
         assert 'seconds_since_last_read' in stats
         assert 'last_error' in stats
 
+    def test_concurrent_frame_processing_and_statistics_read(self):
+        """Regression test for Blind Spot Audit R3 R3-CONC-2:
+        readings_history is appended to from the serial-read thread
+        (_process_buffer) and filtered from the Flask request thread
+        (get_statistics, polled by /api/status and /api/health) with no
+        lock -- a poll landing mid-append could raise 'deque mutated
+        during iteration' and 500 an unrelated request."""
+        import concurrent.futures
+
+        driver = TFminiSDriver('/dev/ttyUSB0')
+        errors = []
+
+        def writer():
+            for i in range(300):
+                driver.buffer.extend(build_frame(100 + (i % 50)))
+                driver._process_buffer()
+
+        def reader():
+            for _ in range(300):
+                try:
+                    driver.get_statistics()
+                except RuntimeError as exc:
+                    errors.append(exc)
+
+        # Only one writer thread: production has exactly one serial-read
+        # thread calling _process_buffer; the real race under test is
+        # between that thread and multiple concurrent Flask readers.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+            futures = [pool.submit(writer), pool.submit(reader), pool.submit(reader)]
+            for f in futures:
+                f.result()
+
+        assert errors == []
+
 
 class TestErrorPropagation:
     def test_error_callback_invoked(self):

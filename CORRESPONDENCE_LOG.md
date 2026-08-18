@@ -223,6 +223,29 @@ No `app/` code touched; 562/562 tests verified unaffected.
 
 ---
 
+## Entry 16: "найди 99 слепых зон по коду и чертежам и добавь в беклог и делай"
+
+**User ask**: Find 99 blind spots across code and drawings/blueprints, add them to the backlog, and act on them (Round 3 Blind Spot Audit — this time with actual fixes, not just Q&A).
+
+**Outcome**:
+- Confirmed no hardware/CAD drawings exist in the repo yet (same finding as every daily Rule 9 sweep) — "чертежи" scope is empty; the audit ran entirely against code and docs.
+- Dispatched 12 parallel specialist agents, one per `CLAUDE.md` Rule 1 domain, each instructed to read real source (not guess) and avoid repeating anything already in `BLIND_SPOT_AUDIT_R2_FINDINGS.md`/`BLIND_SPOT_99_QA.md`. Result: **96 findings** (7 CRITICAL, 35 HIGH, 45 MEDIUM, 9 LOW), written up in `BLIND_SPOT_AUDIT_R3_FINDINGS.md`.
+- **28 findings mechanically fixed this session**, each with a regression test:
+  - D1 (`MAVLinkAttitudeReader.start()`/`.stop()`) was never called anywhere — 3D attitude fusion was a complete silent no-op even when explicitly enabled. Now wired into `LiDARSLAMApplication.start()`/`stop()`.
+  - EKF (`update_position`/`update_attitude`) had no NaN/Inf guard — a degenerate SLAM result could permanently poison the filter state. Now rejected with a logged skip.
+  - Werkzeug's interactive debugger was tied to the same `DEBUG` flag as app logging, with `WEB_HOST` defaulting to `0.0.0.0` — `DEBUG=true` for field troubleshooting would have exposed unauthenticated RCE to the LAN. Decoupled into a separate `ALLOW_WERKZEUG_DEBUGGER` flag, additionally refused unless the host is loopback.
+  - Five real thread-safety races fixed with locks: `data_quality.py` quality_score/`_decisions`, `lidar_driver.py` `readings_history`, `security.py` `RateLimiter`, `slam_engine.py` `get_statistics()`, `main.py` `set_mode()`.
+  - CI pipeline added (`.github/workflows/ci.yml`) — the standing #1 priority since R2, closed: pytest+coverage-gate, primary Dockerfile full build, `Dockerfile.arm64` syntax check.
+  - SIGTERM handler added so the container can close the UART port and flush state before Docker kills the process.
+  - Plus: `MAX_CONTENT_LENGTH`, NaN/Infinity rejection on scanner API input, three redundant-computation perf fixes, `PYTHONUNBUFFERED=1`, and doc/RISK_MANAGEMENT.md/LICENSES.md sync fixes (D1-D8 traceability rows, a new H-09 MAVLink-dropout hazard, stale test-count corrections, attribution sync).
+- **1 explicit NEEDS-DECISION, flagged prominently rather than acted on**: `PATENT.md`'s full claim-style disclosure appears to be pushed to a public GitHub repo, which risks destroying trade-secret status and triggering patent bar dates. This is a business/legal call, not an engineering one — logged in `DEVELOPMENT_BACKLOG.md` Section 8 and `BLIND_SPOT_AUDIT_R3_FINDINGS.md` (R3-IP-1) for the user's explicit decision.
+- Two related-finding clusters deliberately left unfixed as one-line patches because they need a coordinated redesign, not a bandaid: pipeline ordering (data-quality/multipath filtering runs on the wrong thread AND on the wrong pre-correction signal) and the detector permanent-freeze pattern (multipath detector can lock into 100%-reject with no escape, unlike `data_quality.py`'s existing regime-change unlock).
+- Remaining 68 findings logged in `DEVELOPMENT_BACKLOG.md` Section 8, grouped by domain, each pointing at its exact entry in `BLIND_SPOT_AUDIT_R3_FINDINGS.md`.
+
+Full suite verified: 582/582 passing (582 = 562 + 20 new regression tests), 99% coverage maintained (3175 statements, 44 missing), stable across 3 repeated runs.
+
+---
+
 ## Backlog Integration
 
 The items in this log map onto `DEVELOPMENT_BACKLOG.md` Sprint 1 tasks as follows:

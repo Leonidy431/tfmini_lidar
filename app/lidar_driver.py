@@ -115,6 +115,13 @@ class TFminiSDriver:
         self.invalid_readings = 0   # parsed but valid=False (sentinel/floor)
         self.last_reading: Optional[LiDARReading] = None
         self.readings_history = deque(maxlen=100)
+        # readings_history is appended to from the serial-read thread
+        # (_process_buffer) and iterated/filtered from the Flask request
+        # thread (get_statistics, polled by /api/status and /api/health).
+        # Without a lock, a poll landing mid-append can raise "deque
+        # mutated during iteration" and 500 an unrelated request.
+        # (Blind Spot Audit R3, R3-CONC-2)
+        self._history_lock = threading.Lock()
 
         # Reconnection settings
         self.reconnect_enabled = True
@@ -325,7 +332,8 @@ class TFminiSDriver:
                 self.readings_count += 1
                 if not reading.valid:
                     self.invalid_readings += 1
-                self.readings_history.append(reading)
+                with self._history_lock:
+                    self.readings_history.append(reading)
 
                 # Call all callbacks. Iterate over a snapshot so callbacks
                 # added/removed from another thread don't corrupt iteration.
@@ -484,8 +492,11 @@ class TFminiSDriver:
         avg_distance = 0
         avg_strength = 0
 
-        if self.readings_history:
-            valid_readings = [r for r in self.readings_history if r.valid]
+        with self._history_lock:
+            history_snapshot = list(self.readings_history)
+
+        if history_snapshot:
+            valid_readings = [r for r in history_snapshot if r.valid]
             if valid_readings:
                 avg_distance = sum(r.distance for r in valid_readings) / len(valid_readings)
                 avg_strength = sum(r.signal_strength for r in valid_readings) / len(valid_readings)

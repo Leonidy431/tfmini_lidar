@@ -30,7 +30,8 @@
 
 **Легенда**: ✅ done · ✅ sim / ⏳ field — симуляционная часть P9 выполнена против ground-truth модели эмулятора (`docs/P9_SIMULATION_VALIDATION.md`), полевая часть требует физического железа · ⏳ blocked on hardware/field data · ❌ not started
 
-**P9-sim campaign** (`tests/test_p9_simulation.py`, 9 тестов): ТЗ определяет P9 как "ROV hardware **or validated simulation**" — симуляционная половина выполнена, измеренные числа в `docs/P9_SIMULATION_VALIDATION.md`. Кампания нашла и закрыла 2 реальных дефекта в D2 (EM-инициализация по медиане → расщепление прямого кластера → 16.5% ложных срабатываний; исправлено перцентильной инициализацией + защитой по критерию Ашмана D>2) и дала измеренную P8-рекомендацию для D8 (`EKF_PROCESS_NOISE_ATTITUDE`: 0.05 для манёвров, ~0.001 для station-keeping → 49.7% сглаживание). Итог: **267/267 тестов**.
+**P9-sim campaign** (`tests/test_p9_simulation.py`, 9 тестов): ТЗ определяет P9 как "ROV hardware **or validated simulation**" — симуляционная половина выполнена, измеренные числа в `docs/P9_SIMULATION_VALIDATION.md`. Кампания нашла и закрыла 2 реальных дефекта в D2 (EM-инициализация по медиане → расщепление прямого кластера → 16.5% ложных срабатываний; исправлено перцентильной инициализацией + защитой по критерию Ашмана D>2) и дала измеренную P8-рекомендацию для D8 (`EKF_PROCESS_NOISE_ATTITUDE`: 0.05 для манёвров, ~0.001 для station-keeping → 49.7% сглаживание). Итог на момент кампании: **267/267 тестов** (снимок состояния; актуальное
+число тестов растёт — см. `pytest --collect-only -q`, Blind Spot Audit R3 R3-DOC-5).
 
 **Итог кодинг-сессии**:
 - Новый код: `app/mavlink_imu.py`, `app/multipath_detector.py`, `app/environmental_correction.py`, `app/ekf_3d_attitude.py` (4 модуля)

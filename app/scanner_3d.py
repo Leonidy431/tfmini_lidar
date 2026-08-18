@@ -237,15 +237,18 @@ class Scanner3D:
     def get_statistics(self) -> dict:
         """Scan progress and golden-signal metrics."""
         with self.lock:
+            # Compute each layer's coverage once instead of 2-3x
+            # (Blind Spot Audit R3, R3-PERF-6) -- this is broadcast every
+            # progress_emit_every accepted readings during an active scan.
+            layer_coverages = {layer: self._layer_coverage(layer) for layer in self.layers}
             layers = {
                 str(layer * self.config.layer_height): {
-                    'coverage': self._layer_coverage(layer),
-                    'complete': self._layer_coverage(layer)
-                                >= self.config.min_coverage_complete,
+                    'coverage': coverage,
+                    'complete': coverage >= self.config.min_coverage_complete,
                 }
-                for layer in sorted(self.layers)
+                for layer, coverage in sorted(layer_coverages.items())
             }
-            coverages = [self._layer_coverage(l) for l in self.layers]
+            coverages = list(layer_coverages.values())
             duration = 0.0
             if self.started_at:
                 end = self.finished_at or time.time()

@@ -12,6 +12,11 @@ let isRecording = false;
 let isNavigating = false;
 let isScanning = false;
 let scanLayerHeight = 0.5; // synced from server config on first status update
+// Distance gauge full-scale range, synced from server config (Blind Spot
+// Audit R3, R3-UX-6). Was hardcoded to the TFmini-S's in-air 12m spec range,
+// but the deployed underwater max_range is 4.0m by default, so every valid
+// reading sat below 33% of the gauge.
+let sensorMaxRange = 12;
 
 // Initialize on DOM ready
 document.addEventListener('DOMContentLoaded', () => {
@@ -541,6 +546,9 @@ function updateStatusDisplay(status) {
     if (status.config?.scanner?.layer_height) {
         scanLayerHeight = status.config.scanner.layer_height;
     }
+    if (status.config?.lidar?.max_range) {
+        sensorMaxRange = status.config.lidar.max_range;
+    }
 }
 
 /**
@@ -624,8 +632,9 @@ function updateReadingDisplay(reading) {
     document.getElementById('signalStrength').textContent = reading.signal_strength;
     document.getElementById('temperature').textContent = reading.temperature.toFixed(1);
 
-    // Update distance bar (0-12m range)
-    const percent = Math.min(100, (reading.distance / 12) * 100);
+    // Update distance bar, scaled to the actual configured sensor range
+    // (Blind Spot Audit R3, R3-UX-6) rather than a hardcoded in-air value.
+    const percent = Math.min(100, (reading.distance / sensorMaxRange) * 100);
     document.getElementById('distanceBar').style.width = `${percent}%`;
 }
 

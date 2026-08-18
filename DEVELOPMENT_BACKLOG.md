@@ -566,3 +566,38 @@ Original design (for reference / re-scheduling): a recurring check every ~2 hour
 Acting on Rule 99 immediately: overall `app/` test coverage was driven from **71% → 99%** (3120 statements, 40 missing), closing essentially every remaining branch across every module — see `CORRESPONDENCE_LOG.md` Entry 13 for the full methodology, including two real test-isolation bugs the coverage push surfaced and fixed (a shared-singleton config leak in `SLAMEngine()`, and an Open3D object-aliasing bug that was silently corrupting an ICP registration target in a *test*, not production code, but worth knowing the failure mode of). Full suite: 562/562 tests, stable across repeated runs.
 
 The 40 remaining uncovered lines are the `if __name__ == '__main__':` entry guard, near-duplicate error-handler lines, and a few defensive except branches whose mock setup cost would exceed their value — logged here rather than chased further, per the same cost/benefit judgment .clauderc Rule 26 implies ("target... not necessarily 100%").
+
+---
+
+## Section 8: Blind Spot Audit Round 3 (full 12-domain Rule 1 sweep)
+
+**Status**: 28/96 findings fixed this session (mechanical, regression-tested); 68 logged below. Full findings table with severity, exact file:line, and status per finding: `BLIND_SPOT_AUDIT_R3_FINDINGS.md`.
+
+**CI pipeline (Section 6/7's standing #1 priority) is now DONE**: `.github/workflows/ci.yml` runs pytest+coverage-gate (95% floor) on every push/PR, plus a full `docker build` of the primary `Dockerfile` and a syntax-only `docker buildx build --check` of `Dockerfile.arm64` (this is exactly the class of check that would have caught R2 15-2's EXPOSE parse bug before it shipped). Section 6's "Continuous Blind-Spot Monitoring LAPSED" note is superseded — CI is the durable replacement it recommended.
+
+### NEEDS-DECISION — requires explicit user/business authorization
+
+- **R3-IP-1 (CRITICAL)**: `PATENT.md`'s full claim-style disclosure appears to be pushed to a **public** GitHub repo (`Leonidy431/tfmini_lidar`). This risks destroying trade-secret status and triggering patent bar dates in absolute-novelty jurisdictions (EP/CN per `docs/FTO.md`). This was flagged to the user directly when found; no unilateral action was taken (repo visibility, provisional filing, and PATENT.md content are all business/legal decisions outside engineering scope). **Action needed**: verify repo visibility; if public, either file a provisional before any applicable bar date or formally reclassify as trade-secret-only.
+- R3-IP-2/3/4: PATENT.md claims, docs/FTO.md CPC classes, and Rule 7's P2-Literature phase all need to account for D1/D2/D3-D4 — logged pending the R3-IP-1 decision above (no point re-drafting claims before knowing the disclosure posture).
+
+### Architectural (need a dedicated session, not a one-line patch)
+
+- **Pipeline ordering** (R3-PERF-1 CRITICAL + R3-DQ-4): `data_quality`/`multipath_detector` filtering runs on the serial-read thread itself (violates the documented enqueue-only real-time contract) AND on the pre-environmental-correction signal (SLAM consumes a different, corrected value than what the filters actually judged). These need to be fixed together — moving only the thread would just relocate the bug.
+- **Detector permanent-freeze** (R3-DQ-6 + R3-TEST-4): `multipath_detector` can get stuck in a 100%-reject steady state with no escape, unlike `data_quality.py`'s existing `regime_change_after` unlock. Extract that pattern into something both modules share, rather than a per-module patch.
+
+### Remaining mechanical/logged items by domain (see `BLIND_SPOT_AUDIT_R3_FINDINGS.md` for exact file:line + fix)
+
+Reliability (7): R3-REL-2/3/4/5/6/7/8 — connect() leak on exception, no try/except in `get_single_reading`, wall-clock vs monotonic staleness check, MAVLink reconnect/backoff, MAVLink connect timeout, stale-window reset on reconnect, quaternion renormalization order.
+Security (4): R3-SEC-3/4/5/6 — WS event rate limiting, `/api/status` sensor_fusion exposure, unused token permission scoping, inert `check_auth` backstop.
+Performance (4): R3-PERF-2/3/4/8 — object-detection O(n) scan, per-reading full-window stat recompute, synchronous `socketio.emit` on the pipeline thread, duplicate `get_attitude()` lock acquisition.
+Testing (5): R3-TEST-4/5/6/7/8 — multipath freeze-state test, calibration edge-case tests, malformed-type API body tests, flaky fixed-sleep test, unseeded-ICP test.
+API Design (7): R3-API-1 through 8 — DELETE route naming, error-shape consistency, destructive duplicate-POST resets, list pagination, WS protocol doc gaps, WS versioning, radius clamping, success-envelope consistency.
+DevOps (2): R3-DEVOPS-3/4/6/7/8 — compose resource limits, compose log driver, image tag versioning, apt pinning, dead gunicorn env vars.
+Documentation (3): R3-DOC-2/3/6/7/8 — Scanner API doc section, D1-D8 CONFIGURATION.md entries, missing docstrings.
+Data Quality (5): R3-DQ-1/2/3/5/7/8 — frame resync edge cases, checksum-resync accidental-lock-on, regime-change consistency check, dual refractive-index config vars, `set_depth` unit/range validation, `get_single_reading` bypassing counters.
+Concurrency (2): R3-CONC-6/7/8 — unlocked `get_health` field reads, `multipath_detector` stats race (currently benign), non-atomic scanner save.
+Compliance (4): R3-COMP-1/2/3/7/8 — combined-staleness escalation, EKF-divergence health signal, `attitude_3d_lost` health reason, per-hazard test citations, D1-D8 operational-controls documentation.
+Patent/IP (1): R3-IP-8 — dead `asyncio-mqtt`/`websocket-client` dependencies.
+UX/Frontend (6): R3-UX-1/2/3/4/5/7/8 — point-cloud buffer rebuild, unthrottled DOM writes, focus-outline removal, missing `aria-pressed`, missing `role="progressbar"`, missing `withLoading()` wrapping, false-negative loading state.
+
+**Next-session priority**: the pipeline-ordering cluster (R3-PERF-1/R3-DQ-4) — it's the highest-value remaining item, affecting both real-time correctness and data quality simultaneously, in code already shipped and enabled by default.

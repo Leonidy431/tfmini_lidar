@@ -49,7 +49,10 @@ export LIDAR_API_TOKEN="your-secure-token"
 
 Routes requiring auth: `/api/start`, `/api/stop`, `/api/mode/*`, `/api/mapping/*`, 
 `/api/maps/*/save`, `/api/maps/*/load`, `/api/maps/*/delete`, `/api/profiles/*`, 
-`/api/objects/clear`, `/api/objects/save`
+`/api/objects/clear`, `/api/objects/save`, `/api/localization/reset`,
+`/api/scanner/start`, `/api/scanner/stop`, `/api/scanner/layer`, `/api/scanner/clear`,
+`/api/scanner/save/*` (Blind Spot Audit R3, R3-DOC-1 — this table previously omitted
+the scanner routes and localization/reset entirely)
 
 Public routes: `/`, `/api/health`, `/api/register_service`, `/api/status` (read-only)
 

@@ -28,6 +28,7 @@ below retain their own licenses and must be attributed in distributions.
 | requests | Apache-2.0 | HTTP client |
 | python-dateutil | Apache-2.0 / BSD | Date parsing |
 | pytest | MIT | Testing |
+| simple-websocket | MIT | Real WebSocket transport for Flask-SocketIO's threading async_mode — without it every client silently degrades to HTTP long-polling (Blind Spot Audit R2 19-6) |
 
 Full license texts ship with each package's distribution. Pinned versions are
 in [`requirements.txt`](requirements.txt).
@@ -47,6 +48,23 @@ The implementations are original, but the underlying algorithms are prior art:
 - **DBSCAN-style clustering** — Ester et al., *A Density-Based Algorithm for
   Discovering Clusters in Large Spatial Databases with Noise*, KDD, 1996.
 - **IQR / Z-score outlier detection** — standard statistical methods (public domain).
+- **D1 (MAVLink 3D attitude, `app/mavlink_imu.py`)** — Diebel (2006),
+  *Representing Attitude: Euler Angles, Unit Quaternions, and Rotation
+  Vectors*; Beard & McLain (2012), *Small Unmanned Aircraft* Ch. 2; PX4
+  `ATTITUDE_QUATERNION` message spec.
+- **D2 (multipath/turbidity detection, `app/multipath_detector.py`)** —
+  Jerlov (1976), *Marine Optics* (scattering); Carpenter et al. (1999) and
+  Thrun et al. (2005), *Probabilistic Robotics* Ch. 5 (mixture-model outlier
+  detection / sensor models with a failure mode).
+- **D3+D4 (depth/temperature refractive correction,
+  `app/environmental_correction.py`)** — Austin & Halikas (1976) (refractive
+  index rise with pressure/depth).
+- **D8 (9-DOF EKF fusion, `app/ekf_3d_attitude.py`)** — Bar-Shalom, Li &
+  Kirubarajan (2001), *Estimation with Applications to Tracking and
+  Navigation* Ch. 5; Beard & McLain (2012).
+
+*(D1-D8 citations added Blind Spot Audit R3, R3-IP-6 — this section was
+stale relative to the in-code citations these modules already carry.)*
 
 ## LGPL Compliance (pymavlink)
 

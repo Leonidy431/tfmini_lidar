@@ -13,6 +13,7 @@ environment.
 
 import logging
 import math
+import threading
 from collections import deque
 from dataclasses import dataclass
 from typing import Optional, Deque
@@ -90,6 +91,13 @@ class DataQualityValidator:
 
         # Quality score tracking (rolling over recent decisions)
         self._decisions: Deque[bool] = deque(maxlen=200)
+        # _decisions is written from the serial-read thread (via validate()
+        # -> _accept()/_reject()) and read from the Flask request thread
+        # (via the quality_score property, polled by /api/status and
+        # /api/health). Without a lock, a poll landing mid-append can raise
+        # "deque mutated during iteration" and 500 an unrelated request.
+        # (Blind Spot Audit R3, R3-CONC-1)
+        self._decisions_lock = threading.Lock()
 
         # Statistics
         self.total_checked = 0
@@ -209,7 +217,8 @@ class DataQualityValidator:
 
     def _accept(self, distance: float, timestamp: float = None):
         self._window.append(distance)
-        self._decisions.append(True)
+        with self._decisions_lock:
+            self._decisions.append(True)
         self._last_distance = distance
         if timestamp is not None:
             self._last_time = timestamp
@@ -218,7 +227,8 @@ class DataQualityValidator:
     def _reject(self, reason: str, category: str, z_score: float = 0.0,
                count_toward_regime: bool = True) -> QualityResult:
         self.total_rejected += 1
-        self._decisions.append(False)
+        with self._decisions_lock:
+            self._decisions.append(False)
         if count_toward_regime:
             self._consecutive_rejects += 1
 
@@ -267,15 +277,18 @@ class DataQualityValidator:
         A sustained drop indicates calibration drift, sensor fouling, or a
         degraded (e.g. turbid) environment.
         """
-        if not self._decisions:
-            return 1.0
-        accepted = sum(1 for d in self._decisions if d)
-        return round(accepted / len(self._decisions), 3)
+        with self._decisions_lock:
+            if not self._decisions:
+                return 1.0
+            accepted = sum(1 for d in self._decisions if d)
+            total = len(self._decisions)
+        return round(accepted / total, 3)
 
     def reset(self):
         """Clear all state."""
         self._window.clear()
-        self._decisions.clear()
+        with self._decisions_lock:
+            self._decisions.clear()
         self._last_distance = None
         self._last_time = None
         self._baseline_temp = None

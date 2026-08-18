@@ -154,6 +154,32 @@ class TestNumericalStability:
         eigenvalues = np.linalg.eigvalsh(ekf.covariance)
         assert np.all(eigenvalues > -1e-6)
 
+    def test_nan_position_update_rejected_state_stays_finite(self):
+        """Regression test for Blind Spot Audit R3 R3-TEST-1: update_position
+        had no np.isfinite guard, so a NaN position (plausible from a
+        degenerate SLAM/localization result) would permanently poison
+        self.state/self.covariance with NaN -- no subsequent predict/update
+        call recovers, since NaN propagates through every further matrix op."""
+        ekf = EKF3DAttitude()
+        ekf.update_position([1.0, 2.0, 3.0])  # establish a known-good state
+        applied = ekf.update_position([float('nan'), 0.0, 0.0])
+        assert applied is False
+        assert ekf.skipped_singular_updates == 1
+        assert np.all(np.isfinite(ekf.state))
+        assert np.all(np.isfinite(ekf.covariance))
+        # Filter must still be usable afterward.
+        assert ekf.update_position([1.1, 2.1, 3.1]) is True
+
+    def test_inf_attitude_update_rejected_state_stays_finite(self):
+        """Same guard, attitude path (Blind Spot Audit R3 R3-TEST-1)."""
+        ekf = EKF3DAttitude()
+        applied = ekf.update_attitude(float('inf'), 0.0, 0.0)
+        assert applied is False
+        assert ekf.skipped_singular_updates == 1
+        assert np.all(np.isfinite(ekf.state))
+        assert np.all(np.isfinite(ekf.covariance))
+        assert ekf.update_attitude(0.1, 0.1, 0.1) is True
+
 
 class TestSE3Pose:
     def test_se3_pose_shape_and_orthonormal(self):

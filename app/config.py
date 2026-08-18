@@ -178,6 +178,15 @@ class Config:
     # Environment settings
     DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 
+    # The Werkzeug interactive debugger allows arbitrary code execution from
+    # any client that can trigger an unhandled exception. It must never be
+    # derived from DEBUG alone (DEBUG is also used for verbose app logging,
+    # which operators reasonably enable for field troubleshooting while
+    # WEB_HOST is 0.0.0.0). Requires an explicit, separate opt-in AND is
+    # still refused unless the server only listens on loopback.
+    # (Blind Spot Audit R3, R3-SEC-1)
+    ALLOW_WERKZEUG_DEBUGGER = os.getenv("ALLOW_WERKZEUG_DEBUGGER", "False").lower() == "true"
+
     # Directory paths
     DATA_DIR = os.getenv("DATA_DIR", "/app/data")
     MAPS_DIR = os.path.join(DATA_DIR, "maps")

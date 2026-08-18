@@ -199,6 +199,37 @@ class TestQualityScore:
         assert v.total_checked == 0
         assert v.quality_score == 1.0
 
+    def test_concurrent_validate_and_quality_score_read(self):
+        """Regression test for Blind Spot Audit R3 R3-CONC-1: quality_score
+        raced with _accept()/_reject() appending to the same deque from the
+        serial-read thread, while quality_score is polled from the Flask
+        thread via get_health()/get_status() -- a poll landing mid-append
+        could raise 'deque mutated during iteration' and 500 an unrelated
+        request."""
+        import concurrent.futures
+
+        v = DataQualityValidator(min_samples=5)
+        errors = []
+
+        def writer():
+            for i in range(500):
+                v.validate(distance=2.0 + (i % 3) * 0.01, signal_strength=200)
+
+        def reader():
+            for _ in range(500):
+                try:
+                    _ = v.quality_score
+                except RuntimeError as exc:
+                    errors.append(exc)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+            futures = [pool.submit(writer), pool.submit(reader),
+                       pool.submit(reader), pool.submit(writer)]
+            for f in futures:
+                f.result()
+
+        assert errors == []
+
 
 class TestStatistics:
     def test_statistics_shape(self):

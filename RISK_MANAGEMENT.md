@@ -70,8 +70,17 @@ Residual risk of **High** blocks release until further controls are added.
   - Signal-strength threshold gate — `DataQualityValidator.validate`
   - Physical range bounds (min/max) enforced before processing
   - Data Quality Score degradation is observable operator signal
+  - **Optional, stronger control (D2):** two-component GMM multipath/turbidity
+    classifier — `app/multipath_detector.py`. P9-sim validation: 100% detection
+    rate, 0% false-positive rate on the physics-grounded emulator (see
+    `TECHNICAL_SPECIFICATION.md`, `BLIND_SPOT_99_QA.md` Q22/Q65). **Ships
+    disabled by default** (`ENABLE_MULTIPATH_DETECTION=false`,
+    `app/config.py`) — the residual-risk figure below assumes it OFF. An
+    operator in consistently turbid water should enable it.
+    (Blind Spot Audit R3, R3-COMP-5)
 - **Residual:** S3 × P2 = **Medium** (residual risk accepted; operator advised to
-  monitor Data Quality Score and abort if it drops below 0.7)
+  monitor Data Quality Score and abort if it drops below 0.7; enabling D2
+  above further reduces this in turbid conditions)
 
 ### H-03 — Laser safety (Class 1 eye exposure during handling)
 - **Cause:** TFmini-S 850 nm emitter active during bench setup.
@@ -135,6 +144,30 @@ Residual risk of **High** blocks release until further controls are added.
   - Operator responsibility documented: verify map currency before navigation
 - **Residual:** S3 × P1 = **Low**
 
+### H-09 — MAVLink attitude-source (D1) dropout during 3D beam projection
+- **Cause:** Telemetry/tether dropout, MAVLink adapter fault, or the source
+  simply never having connected — distinct in cause from H-05's ICP/SLAM
+  drift, though the effect is the same class of corrupted map geometry that
+  H-02 already rates S3 for.
+- **Effect:** `_project_beam` silently reverts every 3D beam projection onto
+  the single `current_heading` placeholder axis (0.0 if `set_heading()` was
+  never called) — collapsing 3D geometry onto a fixed 2D reference with no
+  distinct degraded reason raised for this specific cause.
+- **Pre-mitigation:** S4 (navigation continuing on corrupted-geometry map) ×
+  P2 (tether/telemetry dropout is routine in ROV operation) = **High**
+- **Controls:**
+  - `MAVLinkAttitudeReader.get_attitude()` returns `None` on a stale/absent
+    sample rather than a fabricated value — `app/mavlink_imu.py`
+  - `_project_beam` falls back to the documented 1D heading path rather than
+    crashing or extrapolating — `app/main.py`
+  - **Gap (logged, not yet closed):** no distinct `attitude_3d_lost`
+    degraded-health reason exists yet, so this fallback is currently silent
+    to the operator — see `BLIND_SPOT_AUDIT_R3_FINDINGS.md` R3-COMP-3.
+- **Residual:** S3 × P2 = **Medium** (accepted pending the `attitude_3d_lost`
+  health-reason fix; D1 is opt-in via `ENABLE_MAVLINK_3D_ATTITUDE`, so this
+  hazard applies only when that flag is set)
+  (Blind Spot Audit R3, R3-COMP-6)
+
 ---
 
 ## 3. Residual Risk Summary
@@ -149,10 +182,11 @@ Residual risk of **High** blocks release until further controls are added.
 | H-06 Unauthorized control | Medium | Low | Yes |
 | H-07 Resource exhaustion | Medium | Low | Yes |
 | H-08 Stale map | Medium | Low | Yes |
+| H-09 MAVLink attitude dropout (D1, opt-in) | High | Medium | Yes (pending `attitude_3d_lost` health reason) |
 
 **Overall residual risk:** Acceptable for supervised operation as a navigation aid.
-Two hazards retain **Medium** residual risk (H-02, H-05); both are accepted on the
-explicit condition that a human operator supervises the session and retains manual
+Three hazards retain **Medium** residual risk (H-02, H-05, H-09); all are accepted on
+the explicit condition that a human operator supervises the session and retains manual
 control authority.
 
 ---
@@ -203,4 +237,12 @@ spot audit (Rule 1) before each release and fold new hazards into this file.
 | Authn / path safety / CORS / rate limit | `app/security.py` |
 | Confidence / drift / deviation | `app/localization.py`, `app/profile_recorder.py` |
 | Container hardening / healthcheck | `Dockerfile` |
+| D1: MAVLink 3D attitude (H-09) | `app/mavlink_imu.py` |
+| D2: Multipath/turbidity detection (H-02) | `app/multipath_detector.py` |
+| D3+D4: Depth/temperature refractive correction | `app/environmental_correction.py` |
+| D8: 9-DOF EKF position+attitude fusion | `app/ekf_3d_attitude.py` |
 | Verification | `tests/` |
+
+*(D1/D2/D3-D4/D8 rows added Blind Spot Audit R3, R3-COMP-4 — the table
+previously claimed full coverage while omitting all four shipped,
+feature-flagged D-series modules.)*

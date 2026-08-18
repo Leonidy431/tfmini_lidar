@@ -69,6 +69,8 @@ All four are wired into `app/main.py` behind `Config` feature flags that default
 | [`DEVELOPMENT_BACKLOG.md`](DEVELOPMENT_BACKLOG.md) | 8-week sprint plan: Blind Spot Audit Round 2, D1-D8 implementation tasks (with live status), technical debt, resource allocation, risk register |
 | [`SPRINT_1_WORKPLAN.md`](SPRINT_1_WORKPLAN.md) | Day-by-day Sprint 1 breakdown (D1/D2 P1-P6 + audit domains 15-19) |
 | [`BLIND_SPOT_AUDIT_R2_PLAN.md`](BLIND_SPOT_AUDIT_R2_PLAN.md) | Execution plan for the 10 remaining specialist domains (15-24): roles, checklists, expected finding counts |
+| [`BLIND_SPOT_AUDIT_R2_FINDINGS.md`](BLIND_SPOT_AUDIT_R2_FINDINGS.md) | Round 2 findings (44, domains 15-24) with fix status |
+| [`BLIND_SPOT_AUDIT_R3_FINDINGS.md`](BLIND_SPOT_AUDIT_R3_FINDINGS.md) | Round 3 findings — full 12-domain Rule 1 sweep, 96 findings, 23 mechanically fixed this session with regression tests, remainder logged (including the R3-IP-1 NEEDS-DECISION item on possible public disclosure of `PATENT.md`) |
 | [`CORRESPONDENCE_LOG.md`](CORRESPONDENCE_LOG.md) | Chronological request → outcome log for the whole session (Rule 6 continuity); read this first after a context reset to see what was asked and what was delivered, in order |
 | [`SESSION_COMPLETION_REPORT.md`](SESSION_COMPLETION_REPORT.md) | Point-in-time snapshot report from the end of the physics-audit + Orin Nano phase of work |
 
@@ -135,7 +137,9 @@ app/
   security.py                       Auth, rate limiting, path safety
   config.py                          Dataclass configuration (incl. D1-D8 flags)
   web/                                 Frontend (HTML/CSS/JS, Three.js)
-tests/                        Pytest suites (258 tests as of this session)
+tests/                        Pytest suites (562 tests as of this session; run
+                               `pytest --collect-only -q` for the live count
+                               rather than trusting this comment)
 docs/                         Deep-dive reference docs (see tables above)
 ```
 
