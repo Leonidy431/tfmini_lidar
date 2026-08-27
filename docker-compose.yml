@@ -19,6 +19,10 @@ services:
       # Explicit device mapping only; no full /dev mount
       - /dev/ttyUSB0:/dev/ttyUSB0
       - /dev/ttyUSB1:/dev/ttyUSB1
+    # See .env.example at the repo root for the full list of variables this
+    # app reads (D1-D8 feature flags, security, LiDAR tuning) with defaults
+    # and rationale. Only the ones this deployment overrides need to be
+    # listed here.
     environment:
       - DEBUG=false
       - LIDAR_PORT=/dev/ttyUSB0

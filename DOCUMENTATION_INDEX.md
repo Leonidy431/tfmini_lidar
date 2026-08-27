@@ -71,6 +71,7 @@ All four are wired into `app/main.py` behind `Config` feature flags that default
 | [`BLIND_SPOT_AUDIT_R2_PLAN.md`](BLIND_SPOT_AUDIT_R2_PLAN.md) | Execution plan for the 10 remaining specialist domains (15-24): roles, checklists, expected finding counts |
 | [`BLIND_SPOT_AUDIT_R2_FINDINGS.md`](BLIND_SPOT_AUDIT_R2_FINDINGS.md) | Round 2 findings (44, domains 15-24) with fix status |
 | [`BLIND_SPOT_AUDIT_R3_FINDINGS.md`](BLIND_SPOT_AUDIT_R3_FINDINGS.md) | Round 3 findings — full 12-domain Rule 1 sweep, 96 findings, 23 mechanically fixed this session with regression tests, remainder logged (including the R3-IP-1 NEEDS-DECISION item on possible public disclosure of `PATENT.md`) |
+| [`OPERATOR_DEBTS.md`](OPERATOR_DEBTS.md) | NEEDS-DECISION items requiring the operator's judgment (not engineering), plus periodic self-assessment of gaps in the autonomy tooling itself; a 3-hour Routine reminds the operator from this file |
 | [`CORRESPONDENCE_LOG.md`](CORRESPONDENCE_LOG.md) | Chronological request → outcome log for the whole session (Rule 6 continuity); read this first after a context reset to see what was asked and what was delivered, in order |
 | [`SESSION_COMPLETION_REPORT.md`](SESSION_COMPLETION_REPORT.md) | Point-in-time snapshot report from the end of the physics-audit + Orin Nano phase of work |
 

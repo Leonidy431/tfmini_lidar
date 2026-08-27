@@ -1,6 +1,6 @@
 {
   "$schema_note": "Dynamic project dependency map (AST-lite). Regenerate the 'modules' section whenever import statements change: `grep -E '^from app\\.|^import app\\.' app/*.py`. Regenerate 'tests_covering' whenever a test file's imports change: `grep -oE 'from app\\.[a-z_0-9]+' tests/test_*.py`. This file exists so an agent can answer 'what depends on the file I'm about to edit?' without re-reading the whole tree -- see CLAUDE.md Rule 8 and validation_protocol.md Step 0.",
-  "generated": "2026-07-30",
+  "generated": "2026-08-27",
   "generated_by": "manual grep audit (see $schema_note for the regeneration commands)",
   "root_package": "app",
   "modules": {
@@ -171,9 +171,9 @@
                       "test_p9_simulation.py", "test_coverage_final.py", "test_coverage_99.py"]
   },
   "coverage_summary": {
-    "as_of_commit": "6c94d01",
-    "total_statements": 3120,
-    "missing": 40,
+    "as_of_commit": "5bf430b",
+    "total_statements": 3175,
+    "missing": 44,
     "percent": 99,
     "source": "python3 -m pytest tests/ --cov=app --cov-report=term-missing"
   },

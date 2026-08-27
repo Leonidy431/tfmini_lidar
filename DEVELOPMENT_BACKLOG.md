@@ -1,7 +1,7 @@
 # Development Backlog (Разработческий бэклог)
 
 **Project**: BlueOS LiDAR SLAM Navigation System (BLSNS)  
-**Updated**: 2024-01-15 (code delivered for D1/D2/D3/D4/D8, см. CORRESPONDENCE_LOG.md Entry 9)  
+**Updated**: 2026-08-27 (Blind Spot Audit Round 3 + operator-debt self-assessment, см. `CORRESPONDENCE_LOG.md` Entry 16/17; this section previously read 2024-01-15 and was stale by several sprints — see `BLIND_SPOT_AUDIT_R3_FINDINGS.md` for how the audit rounds surface this exact class of drift)  
 **Owner**: Engineering Team  
 **Status**: Active Development
 
@@ -9,21 +9,25 @@
 
 ## Executive Summary
 
-Backlog содержит 4 категории работ:
-1. **Blind Spot Audit Round 2** (14/24 domains complete → 10 remaining)
-2. **Deferred Decisions (D1-D8)** из Physics Audit — **P7 код реализован для D1/D2/D3/D4/D8** (258/258 тестов), P9 (полевая калибровка) заблокирована на аппаратуре
+Backlog содержит 6 категорий работ (originally 4; Sections 7-8 added since):
+1. **Blind Spot Audit Round 2** (all 24 domains complete — Section 1's per-domain plan is historical, see `BLIND_SPOT_AUDIT_R2_FINDINGS.md` for the actual results)
+2. **Deferred Decisions (D1-D8)** из Physics Audit — **P7-P11 код реализован для D1/D2/D3/D4/D8**, P9 field calibration заблокирована на аппаратуре (P9-sim done for all four, see `TECHNICAL_SPECIFICATION.md`)
 3. **Technical Debt & Enhancements** (low-priority improvements)
-4. **Correspondence Log Integration + Documentation Index + Continuous Blind-Spot Monitoring** (Sections 4-6, новое)
+4. **Correspondence Log Integration + Documentation Index + Continuous Blind-Spot Monitoring** (Sections 4-6)
+5. **Engineering Discipline Baseline (.clauderc) + Coverage Milestone** (Section 7 — DONE, coverage driven 71%→99%)
+6. **Blind Spot Audit Round 3** (Section 8 — full 12-domain Rule 1 sweep, 96 findings, 28 fixed, 68 logged, 1 NEEDS-DECISION)
 
-**Текущий статус (после кодинг-сессии)**:
-- ✅ `app/mavlink_imu.py`, `app/multipath_detector.py`, `app/environmental_correction.py`, `app/ekf_3d_attitude.py` реализованы, протестированы (83 новых теста), подключены в `app/main.py` за feature-флагами (по умолчанию выключены)
-- ✅ 258/258 тестов проходят стабильно
-- ⏳ P8 (ablation) и P9 (calibration) для всех решений заблокированы на доступе к железу (MAVLink IMU, мутномер, глубоководный бассейн, термокамера)
+**Текущий статус (2026-08-27)**:
+- ✅ `app/mavlink_imu.py`, `app/multipath_detector.py`, `app/environmental_correction.py`, `app/ekf_3d_attitude.py` реализованы, протестированы, подключены в `app/main.py` за feature-флагами (по умолчанию выключены); D1 was silently never started until R3-REL-1 fixed it (see Section 8)
+- ✅ 582/582 тестов проходят стабильно, 99% coverage (3175 statements, 44 missing)
+- ✅ CI pipeline live (`.github/workflows/ci.yml`) — was the standing #1 priority since Round 2, closed in Round 3
+- ⏳ P9 field calibration for all four D1-D8 decisions still blocked on hardware (MAVLink IMU, turbidity tank, depth pool, oven)
+- 🔴 **NEEDS-DECISION, unresolved**: `PATENT.md`'s claim disclosure appears to be in this public GitHub repo (R3-IP-1) — a business/legal call, not yet actioned
 
-**Рекомендуемый фокус на следующие недели**:
-- Blind Spot Audit domains 15–19 (можно начинать немедленно, не заблокировано)
-- Field validation D1/D2/D3/D4/D8 как только появится аппаратура (P8-P9 фазы)
-- Documentation Index + continuous blind-spot monitoring (см. Sections 5-6)
+**Рекомендуемый фокус**:
+- Section 8's architectural clusters (pipeline ordering, detector permanent-freeze) — highest engineering-value remaining item, needs a dedicated session
+- R3-IP-1 needs the operator's explicit decision before further Patent/IP work
+- Field validation D1/D2/D3/D4/D8 as soon as hardware is available (P8-P9 phases)
 
 ---
 
