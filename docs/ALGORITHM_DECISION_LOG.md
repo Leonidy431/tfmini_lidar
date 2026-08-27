@@ -358,6 +358,129 @@ def test_regime_change_recovery():
 
 ---
 
+## Decision 4: Health-Signal Coverage for D1/D8 (attitude_3d_lost + ekf_diverged)
+
+**Status**: ✅ IMPLEMENTED
+**Specialist Confidence**: N/A — scoped bug-fix, not a novel algorithm choice (see Note below)
+**Test Coverage**: 7 new unit tests
+
+**Note on HLD depth**: this decision does not run the full 32-specialist
+panel / P2-P6 literature synthesis, matching precedent already set in this
+log's own "Decision 3" scope and in `BLIND_SPOT_99_QA.md`'s per-question
+justifications: the underlying technique (covariance-trace monitoring as an
+EKF health signal) is standard and already cited in
+`app/ekf_3d_attitude.py`'s own docstring (Bar-Shalom, Li & Kirubarajan
+2001, Ch. 5), not a new algorithm being selected from competing candidates.
+Full P1/P7/P9-caveat/P10/P11/P12 phases are still run below because those
+are the phases that actually matter for a correctness/observability fix.
+
+### Problem (P1)
+
+Two related gaps identified in Blind Spot Audit Round 3 (`BLIND_SPOT_AUDIT_R3_FINDINGS.md`, cross-referenced in `RISK_MANAGEMENT.md` H-09):
+
+1. **R3-COMP-3**: `get_health()`'s `heading_missing` reason is derived
+   solely from the legacy `heading_ever_set` flag (set only by
+   `set_heading()`) and never observes MAVLink 3D attitude
+   (`self.mavlink_attitude`) transitions. Two consequences:
+   - A deployment using *only* D1 (MAVLink 3D attitude, never calling the
+     legacy `set_heading()`) reports `no_heading_source` forever even while
+     a real attitude source is actively driving beam projection — a false
+     positive.
+   - A mid-mission MAVLink dropout after 3D attitude was active silently
+     reverts `_project_beam()` to the 1D compass-heading fallback with
+     **zero new degraded reason** — a false negative, and the more
+     safety-relevant of the two (H-09 in `RISK_MANAGEMENT.md`, pre-mitigation
+     S4×P2=High).
+2. **R3-COMP-2**: `EKF3DAttitude.get_statistics()` already exposes
+   `covariance_trace`/`skipped_singular_updates`, but `get_health()` never
+   reads them — a diverged filter (unbounded covariance growth from
+   sustained singular-update skips) still reports `ekf_fusion_active: true`
+   with no degraded signal, unlike `localization.py`'s existing
+   `lost_threshold`/`is_lost` gate for the same class of failure.
+
+### Design (P7)
+
+- `LiDARSLAMApplication` tracks `self._attitude_3d_ever_active: bool`, set
+  the first time `_project_beam()` observes a non-`None` MAVLink attitude
+  sample (single call site already reads `mavlink_attitude.get_attitude()`
+  here — no new lock acquisitions, R3-PERF-8's duplicate-call finding is
+  unrelated and untouched).
+- `get_health()`'s heading-source check now treats `attitude_3d_active` as
+  an equally valid heading source alongside `heading_ever_set` (closes the
+  false-positive case above as a side effect — same conceptual bug, same
+  code block).
+- New reason `attitude_3d_lost`: fires when 3D attitude *was* active at
+  some point this session but is not active *now*, in a heading-dependent
+  mode. Distinct from `no_heading_source` (which now means "no heading
+  source has EVER been available," a strictly worse state).
+- New reason `ekf_diverged`: fires when `ekf.get_statistics()
+  ['covariance_trace']` exceeds `Config.ekf.divergence_trace_threshold`
+  (new field, env `EKF_DIVERGENCE_TRACE_THRESHOLD`, default `50.0`).
+
+### Calibration caveat (P9)
+
+The `50.0` default is a **coarse, uncalibrated smoke detector**, not a
+tuned statistical threshold — this project has no field or P9-sim data
+characterizing what a genuinely diverged 9-DOF EKF's covariance trace looks
+like under this vehicle's actual noise regime (the existing P9-sim campaign
+in `docs/P9_SIMULATION_VALIDATION.md` tuned `EKF_PROCESS_NOISE_ATTITUDE`,
+not a divergence ceiling). It is deliberately set high enough that normal
+operation — including the process-noise growth `predict()` applies every
+cycle absent a correction — should not trip it, so it only fires on the
+kind of runaway growth a genuinely broken sensor/filter would produce.
+Revisit once field or simulated fault-injection data exists (logged as a
+new backlog follow-up, not fabricated here).
+
+### Implementation
+
+```python
+# app/config.py::EKFConfig
+divergence_trace_threshold: float = float(
+    os.getenv("EKF_DIVERGENCE_TRACE_THRESHOLD", "50.0"))
+
+# app/main.py::LiDARSLAMApplication._project_beam()
+if attitude is not None:
+    self._attitude_3d_ever_active = True
+
+# app/main.py::LiDARSLAMApplication.get_health()
+attitude_3d_active = (self.mavlink_attitude.get_attitude() is not None
+                       if self.mavlink_attitude else False)
+heading_missing = (heading_dependent_mode and not self.heading_ever_set
+                    and not attitude_3d_active)
+attitude_3d_lost = (heading_dependent_mode and self._attitude_3d_ever_active
+                     and not attitude_3d_active)
+ekf_diverged = (self.ekf is not None and self.ekf.get_statistics()
+                ['covariance_trace'] > self.config.ekf.divergence_trace_threshold)
+```
+
+### Validation (P11)
+
+7 new tests in `tests/test_main_internals.py`: `attitude_3d_lost` fires
+only after a real active→inactive transition (not on first read), does not
+fire when 3D attitude was never configured, does not double-report with
+`no_heading_source`; `ekf_diverged` fires above threshold and not below,
+and is absent entirely when `Config.ekf.enabled` is `false`.
+
+### Documentation (P12)
+
+- `RISK_MANAGEMENT.md` H-09: the "Gap (logged, not yet closed)" bullet
+  updated to reflect `attitude_3d_lost` now existing.
+- `RISK_MANAGEMENT.md` H-05 (nav algorithm failure) gets an `ekf_diverged`
+  control reference alongside the existing localization `is_lost` gate.
+- `.env.example` / this decision record document
+  `EKF_DIVERGENCE_TRACE_THRESHOLD`.
+
+### Decision
+
+| Aspect | Value |
+|--------|-------|
+| **Selected** | Edge-transition tracking (attitude) + static covariance-trace threshold (EKF), both additive-only |
+| **Consensus** | N/A — scoped correctness fix, see Note above |
+| **Status** | ✅ COMPLETE (code), 📋 threshold calibration deferred to P9 field/sim data |
+| **Tests** | 7 new, full suite green |
+
+---
+
 ## Future Decisions (TBD)
 
 ### D-Next: MAVLink 3D Attitude Integration

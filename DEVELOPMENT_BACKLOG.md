@@ -15,7 +15,7 @@ Backlog содержит 6 категорий работ (originally 4; Sections
 3. **Technical Debt & Enhancements** (low-priority improvements)
 4. **Correspondence Log Integration + Documentation Index + Continuous Blind-Spot Monitoring** (Sections 4-6)
 5. **Engineering Discipline Baseline (.clauderc) + Coverage Milestone** (Section 7 — DONE, coverage driven 71%→99%)
-6. **Blind Spot Audit Round 3** (Section 8 — full 12-domain Rule 1 sweep, 96 findings, 28 fixed, 68 logged, 1 NEEDS-DECISION)
+6. **Blind Spot Audit Round 3** (Section 8 — full 12-domain Rule 1 sweep, 96 findings, 30 fixed, 66 logged, 1 NEEDS-DECISION)
 
 **Текущий статус (2026-08-27)**:
 - ✅ `app/mavlink_imu.py`, `app/multipath_detector.py`, `app/environmental_correction.py`, `app/ekf_3d_attitude.py` реализованы, протестированы, подключены в `app/main.py` за feature-флагами (по умолчанию выключены); D1 was silently never started until R3-REL-1 fixed it (see Section 8)
@@ -575,7 +575,7 @@ The 40 remaining uncovered lines are the `if __name__ == '__main__':` entry guar
 
 ## Section 8: Blind Spot Audit Round 3 (full 12-domain Rule 1 sweep)
 
-**Status**: 28/96 findings fixed this session (mechanical, regression-tested); 68 logged below. Full findings table with severity, exact file:line, and status per finding: `BLIND_SPOT_AUDIT_R3_FINDINGS.md`.
+**Status**: 30/96 findings fixed (28 initial pass + 2 follow-up on 2026-08-27, mechanical/regression-tested); 66 logged below. Full findings table with severity, exact file:line, and status per finding: `BLIND_SPOT_AUDIT_R3_FINDINGS.md`.
 
 **CI pipeline (Section 6/7's standing #1 priority) is now DONE**: `.github/workflows/ci.yml` runs pytest+coverage-gate (95% floor) on every push/PR, plus a full `docker build` of the primary `Dockerfile` and a syntax-only `docker buildx build --check` of `Dockerfile.arm64` (this is exactly the class of check that would have caught R2 15-2's EXPOSE parse bug before it shipped). Section 6's "Continuous Blind-Spot Monitoring LAPSED" note is superseded — CI is the durable replacement it recommended.
 
@@ -600,7 +600,7 @@ DevOps (2): R3-DEVOPS-3/4/6/7/8 — compose resource limits, compose log driver,
 Documentation (3): R3-DOC-2/3/6/7/8 — Scanner API doc section, D1-D8 CONFIGURATION.md entries, missing docstrings.
 Data Quality (5): R3-DQ-1/2/3/5/7/8 — frame resync edge cases, checksum-resync accidental-lock-on, regime-change consistency check, dual refractive-index config vars, `set_depth` unit/range validation, `get_single_reading` bypassing counters.
 Concurrency (2): R3-CONC-6/7/8 — unlocked `get_health` field reads, `multipath_detector` stats race (currently benign), non-atomic scanner save.
-Compliance (4): R3-COMP-1/2/3/7/8 — combined-staleness escalation, EKF-divergence health signal, `attitude_3d_lost` health reason, per-hazard test citations, D1-D8 operational-controls documentation.
+Compliance (3): R3-COMP-1/7/8 — combined-staleness escalation, per-hazard test citations, D1-D8 operational-controls documentation. (R3-COMP-2/3 done 2026-08-27, see `docs/ALGORITHM_DECISION_LOG.md` Decision 4.)
 Patent/IP (1): R3-IP-8 — dead `asyncio-mqtt`/`websocket-client` dependencies.
 UX/Frontend (6): R3-UX-1/2/3/4/5/7/8 — point-cloud buffer rebuild, unthrottled DOM writes, focus-outline removal, missing `aria-pressed`, missing `role="progressbar"`, missing `withLoading()` wrapping, false-negative loading state.
 

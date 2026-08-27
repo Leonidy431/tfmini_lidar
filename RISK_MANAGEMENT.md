@@ -110,6 +110,11 @@ Residual risk of **High** blocks release until further controls are added.
   - Drift estimate surfaced in `/api/status`
   - Navigation guidance is advisory only; the ROV pilot retains manual authority
   - Waypoint deviation flags `off_course` status — `app/profile_recorder.py::ProfileNavigator`
+  - **D8 EKF fusion only:** `ekf_diverged` health reason when covariance
+    trace exceeds a coarse safety-net threshold — `EKFConfig.divergence_trace_threshold`,
+    see `docs/ALGORITHM_DECISION_LOG.md` Decision 4 (threshold itself is
+    uncalibrated pending field/sim data — treat as a smoke detector, not a
+    precision instrument)
 - **Residual:** S4 × P1 = **Medium** (residual risk accepted; system is a navigation
   *aid*, not an autonomous controller — human-in-the-loop is a required control)
 
@@ -160,13 +165,15 @@ Residual risk of **High** blocks release until further controls are added.
     sample rather than a fabricated value — `app/mavlink_imu.py`
   - `_project_beam` falls back to the documented 1D heading path rather than
     crashing or extrapolating — `app/main.py`
-  - **Gap (logged, not yet closed):** no distinct `attitude_3d_lost`
-    degraded-health reason exists yet, so this fallback is currently silent
-    to the operator — see `BLIND_SPOT_AUDIT_R3_FINDINGS.md` R3-COMP-3.
-- **Residual:** S3 × P2 = **Medium** (accepted pending the `attitude_3d_lost`
-  health-reason fix; D1 is opt-in via `ENABLE_MAVLINK_3D_ATTITUDE`, so this
-  hazard applies only when that flag is set)
-  (Blind Spot Audit R3, R3-COMP-6)
+  - `get_health()` now raises a distinct `attitude_3d_lost` degraded-health
+    reason on the active→inactive transition (not just first-ever-missing),
+    closing the operator-visibility gap — `LiDARSLAMApplication.get_health()`,
+    see `docs/ALGORITHM_DECISION_LOG.md` Decision 4
+- **Residual:** S3 × P1 = **Low** (D1 is opt-in via
+  `ENABLE_MAVLINK_3D_ATTITUDE`, so this hazard applies only when that flag
+  is set; the dropout is now operator-visible via `attitude_3d_lost`
+  instead of silent)
+  (Blind Spot Audit R3, R3-COMP-6; closed R3-COMP-3 2026-08-27)
 
 ---
 
@@ -182,10 +189,10 @@ Residual risk of **High** blocks release until further controls are added.
 | H-06 Unauthorized control | Medium | Low | Yes |
 | H-07 Resource exhaustion | Medium | Low | Yes |
 | H-08 Stale map | Medium | Low | Yes |
-| H-09 MAVLink attitude dropout (D1, opt-in) | High | Medium | Yes (pending `attitude_3d_lost` health reason) |
+| H-09 MAVLink attitude dropout (D1, opt-in) | High | Low | Yes (`attitude_3d_lost` health reason implemented 2026-08-27) |
 
 **Overall residual risk:** Acceptable for supervised operation as a navigation aid.
-Three hazards retain **Medium** residual risk (H-02, H-05, H-09); all are accepted on
+Two hazards retain **Medium** residual risk (H-02, H-05); both are accepted on
 the explicit condition that a human operator supervises the session and retains manual
 control authority.
 

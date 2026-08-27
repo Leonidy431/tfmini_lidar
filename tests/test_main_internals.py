@@ -232,6 +232,93 @@ class TestHealthBranches:
         assert "high_error_rate" in health["reasons"]
 
 
+class TestAttitudeAndEKFHealthSignals:
+    """Regression tests for Blind Spot Audit R3 R3-COMP-2/R3-COMP-3, see
+    docs/ALGORITHM_DECISION_LOG.md Decision 4."""
+
+    def _idle_driver(self, app):
+        app.driver = MagicMock(is_connected=True)
+        app.driver.get_statistics.return_value = {"error_rate": 0.0,
+                                                  "reconnect_attempts": 0,
+                                                  "seconds_since_last_read": 0.1}
+
+    def test_attitude_3d_counts_as_heading_source(self):
+        """A deployment using only D1 (never calling the legacy
+        set_heading()) must not report no_heading_source while 3D attitude
+        is actively driving beam projection."""
+        app = LiDARSLAMApplication()
+        app.mode = app.MODE_MAPPING
+        self._idle_driver(app)
+        app.mavlink_attitude = MagicMock()
+        app.mavlink_attitude.get_attitude.return_value = MagicMock(roll=0.0, pitch=0.0, yaw=0.0)
+        app._project_beam(1.0, (0.0, 0.0, 0.0))  # observes the attitude sample
+        health = app.get_health()
+        assert "no_heading_source" not in health["reasons"]
+        assert "attitude_3d_lost" not in health["reasons"]
+
+    def test_attitude_3d_lost_after_transition(self):
+        """3D attitude active, then drops (mid-mission MAVLink dropout) ->
+        distinct attitude_3d_lost reason, not conflated with
+        no_heading_source (which means 'never had any heading source')."""
+        app = LiDARSLAMApplication()
+        app.mode = app.MODE_MAPPING
+        self._idle_driver(app)
+        app.mavlink_attitude = MagicMock()
+        app.mavlink_attitude.get_attitude.return_value = MagicMock(roll=0.0, pitch=0.0, yaw=0.0)
+        app._project_beam(1.0, (0.0, 0.0, 0.0))  # attitude active once
+
+        app.mavlink_attitude.get_attitude.return_value = None  # then drops
+        health = app.get_health()
+        assert "attitude_3d_lost" in health["reasons"]
+        assert "no_heading_source" not in health["reasons"]
+
+    def test_no_attitude_3d_lost_when_never_configured(self):
+        """No false positive: attitude_3d_lost must not fire for a build
+        that never had a MAVLink attitude source at all."""
+        app = LiDARSLAMApplication()
+        app.mode = app.MODE_MAPPING
+        self._idle_driver(app)
+        assert app.mavlink_attitude is None
+        health = app.get_health()
+        assert "attitude_3d_lost" not in health["reasons"]
+
+    def test_no_attitude_3d_lost_on_first_read_without_prior_activity(self):
+        """attitude_3d_lost requires an active->inactive TRANSITION, not
+        just 'currently inactive' -- must not fire on the very first health
+        check before _project_beam has ever run."""
+        app = LiDARSLAMApplication()
+        app.mode = app.MODE_MAPPING
+        self._idle_driver(app)
+        app.mavlink_attitude = MagicMock()
+        app.mavlink_attitude.get_attitude.return_value = None
+        health = app.get_health()
+        assert "attitude_3d_lost" not in health["reasons"]
+
+    def test_ekf_diverged_above_threshold(self):
+        app = LiDARSLAMApplication()
+        self._idle_driver(app)
+        app.ekf = MagicMock()
+        app.ekf.get_statistics.return_value = {"covariance_trace": 999.0}
+        health = app.get_health()
+        assert "ekf_diverged" in health["reasons"]
+        assert health["state"] == "degraded"
+
+    def test_ekf_not_diverged_below_threshold(self):
+        app = LiDARSLAMApplication()
+        self._idle_driver(app)
+        app.ekf = MagicMock()
+        app.ekf.get_statistics.return_value = {"covariance_trace": 0.5}
+        health = app.get_health()
+        assert "ekf_diverged" not in health["reasons"]
+
+    def test_ekf_diverged_absent_when_ekf_disabled(self):
+        app = LiDARSLAMApplication()
+        self._idle_driver(app)
+        assert app.ekf is None
+        health = app.get_health()
+        assert "ekf_diverged" not in health["reasons"]
+
+
 class TestSetModeTransitions:
     def test_recording_to_idle_stops_recorder(self):
         app = LiDARSLAMApplication()

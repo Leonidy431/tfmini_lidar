@@ -170,6 +170,14 @@ class EKFConfig:
     process_noise_velocity: float = float(os.getenv("EKF_PROCESS_NOISE_VELOCITY", "0.1"))
     measurement_noise_position: float = float(os.getenv("EKF_MEASUREMENT_NOISE_POSITION", "0.15"))
     measurement_noise_attitude: float = float(os.getenv("EKF_MEASUREMENT_NOISE_ATTITUDE", "0.02"))
+    # Coarse, uncalibrated smoke-detector for filter divergence (get_health()
+    # 'ekf_diverged' reason) -- covariance_trace exceeding this is surfaced
+    # as a degraded-health signal. Deliberately high: no field/P9-sim data
+    # yet characterizes a genuinely diverged filter's trace for this
+    # vehicle's noise regime, so this is set to only catch runaway growth,
+    # not fine-tuned. See docs/ALGORITHM_DECISION_LOG.md Decision 4.
+    divergence_trace_threshold: float = float(
+        os.getenv("EKF_DIVERGENCE_TRACE_THRESHOLD", "50.0"))
 
 
 class Config:

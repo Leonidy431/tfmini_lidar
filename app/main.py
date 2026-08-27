@@ -164,6 +164,12 @@ class LiDARSLAMApplication:
         self.current_heading = 0.0
         self.heading_ever_set = False
         self.heading_last_update = 0.0
+        # Edge-transition tracking for get_health()'s attitude_3d_lost
+        # reason (Blind Spot Audit R3, R3-COMP-3): distinguishes "3D
+        # attitude never configured" (fine, 1D fallback) from "3D attitude
+        # was active and then dropped mid-mission" (a real degraded state
+        # with no visible signal before this). Set in _project_beam().
+        self._attitude_3d_ever_active = False
 
         # Real-time data (protected by _reading_lock)
         self.last_reading: Optional[LiDARReading] = None
@@ -555,6 +561,7 @@ class LiDARSLAMApplication:
         module existed when self.mavlink_attitude is None/stale."""
         attitude = self.mavlink_attitude.get_attitude() if self.mavlink_attitude else None
         if attitude is not None:
+            self._attitude_3d_ever_active = True
             dx_east, dy_north, dz_up = self._compute_3d_beam_offset(
                 distance, attitude.roll, attitude.pitch, attitude.yaw)
         else:
@@ -669,7 +676,37 @@ class LiDARSLAMApplication:
             self.MODE_MAPPING, self.MODE_RECORDING,
             self.MODE_NAVIGATING, self.MODE_SCANNING
         )
-        heading_missing = heading_dependent_mode and not self.heading_ever_set
+        attitude_3d_active = (
+            self.mavlink_attitude.get_attitude() is not None
+            if self.mavlink_attitude else False
+        )
+        # A full 3D attitude source counts as a heading source too -- a
+        # deployment using only D1 (never calling the legacy set_heading())
+        # previously reported no_heading_source forever even while attitude
+        # was actively driving beam projection (Blind Spot Audit R3,
+        # R3-COMP-3).
+        # "No heading source is CURRENTLY active" also fires while
+        # attitude_3d_lost is true (both fire), UNLESS attitude 3D was ever
+        # active this session -- in that case attitude_3d_lost alone is the
+        # more precise, less alarming signal ("we had a better source and
+        # lost it," not "we have never had anything").
+        heading_missing = (heading_dependent_mode and not self.heading_ever_set
+                            and not attitude_3d_active
+                            and not self._attitude_3d_ever_active)
+        # Distinct from heading_missing: attitude WAS active this session
+        # and is not anymore (e.g. a mid-mission MAVLink dropout), silently
+        # reverting _project_beam() to the 1D fallback with no prior signal.
+        attitude_3d_lost = (heading_dependent_mode and self._attitude_3d_ever_active
+                             and not attitude_3d_active)
+        # EKF divergence: covariance_trace exceeding a coarse, uncalibrated
+        # threshold (see Config.ekf.divergence_trace_threshold and
+        # docs/ALGORITHM_DECISION_LOG.md Decision 4). Without this, a
+        # diverged filter still reports ekf_fusion_active: true.
+        ekf_stats = self.ekf.get_statistics() if self.ekf is not None else None
+        ekf_diverged = (
+            ekf_stats is not None
+            and ekf_stats['covariance_trace'] > self.config.ekf.divergence_trace_threshold
+        )
 
         reasons = []
         state = 'healthy'
@@ -678,7 +715,7 @@ class LiDARSLAMApplication:
             state = 'failed'
             reasons.append('sensor_disconnected')
         elif (reconnecting or error_rate > 0.1 or dq < 0.7 or temp_out_of_range
-              or heading_missing or stale_reads):
+              or heading_missing or attitude_3d_lost or ekf_diverged or stale_reads):
             state = 'degraded'
             if reconnecting:
                 reasons.append('reconnecting')
@@ -690,6 +727,10 @@ class LiDARSLAMApplication:
                 reasons.append('temperature_out_of_range')
             if heading_missing:
                 reasons.append('no_heading_source')
+            if attitude_3d_lost:
+                reasons.append('attitude_3d_lost')
+            if ekf_diverged:
+                reasons.append('ekf_diverged')
             if stale_reads:
                 reasons.append('stale_readings')
 
@@ -704,10 +745,7 @@ class LiDARSLAMApplication:
             # Deferred-decision status (Config default: all disabled, so
             # these are None/0 on an unmodified build -- Physics Audit
             # D1/D2/D3-D4/D8).
-            'attitude_3d_active': (
-                self.mavlink_attitude.get_attitude() is not None
-                if self.mavlink_attitude else False
-            ),
+            'attitude_3d_active': attitude_3d_active,
             'multipath_rejected_count': self._multipath_rejected_count,
             'ekf_fusion_active': self.ekf is not None,
         }

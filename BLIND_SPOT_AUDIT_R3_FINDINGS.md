@@ -150,8 +150,8 @@ Legend: ✅ fixed this session · 📋 logged (NEEDS-DECISION / larger change) �
 | # | Sev | Finding | Status |
 |---|-----|---------|--------|
 | R3-COMP-1 | HIGH | `_on_driver_error`'s forced-IDLE only fires on full sensor failure — depth (D3) AND MAVLink attitude (D1) going stale simultaneously during NAVIGATING only ever reaches `degraded`, no alarm | 📋 |
-| R3-COMP-2 | HIGH | EKF exposes divergence signals (`covariance_trace`, `skipped_singular_updates`) but `get_health()` never reads them — a diverged filter still reports healthy | 📋 |
-| R3-COMP-3 | HIGH | `heading_missing` doesn't observe MAVLink-attitude transitions — a mid-mission MAVLink dropout silently reverts 3D beam projection to compass-north with no new degraded reason | 📋 |
+| R3-COMP-2 | HIGH | EKF exposes divergence signals (`covariance_trace`, `skipped_singular_updates`) but `get_health()` never reads them — a diverged filter still reports healthy | ✅ new `ekf_diverged` reason (2026-08-27, see `docs/ALGORITHM_DECISION_LOG.md` Decision 4) |
+| R3-COMP-3 | HIGH | `heading_missing` doesn't observe MAVLink-attitude transitions — a mid-mission MAVLink dropout silently reverts 3D beam projection to compass-north with no new degraded reason | ✅ new `attitude_3d_lost` reason (2026-08-27, see Decision 4) |
 | R3-COMP-4 | MEDIUM | `RISK_MANAGEMENT.md` Section 6 traceability table omits all 4 of the D1/D2/D3-D4/D8 modules despite claiming full coverage | ✅ added traceability rows |
 | R3-COMP-5 | HIGH | H-02 (turbidity) hazard controls never mention `multipath_detector.py` even though it's purpose-built for this and ships disabled by default | ✅ documented as optional H-02 control with P9-sim numbers |
 | R3-COMP-6 | HIGH | No hazard entry exists for MAVLink attitude-source dropout (D1) as a distinct cause from ICP/SLAM drift | ✅ added H-09 |
@@ -176,7 +176,7 @@ Legend: ✅ fixed this session · 📋 logged (NEEDS-DECISION / larger change) �
 ## Summary
 
 - **96 findings** across 12 domains (7 CRITICAL, 35 HIGH, 45 MEDIUM, 9 LOW)
-- **28 fixed this session** (marked ✅ above), each with a regression test where applicable, full suite verified green (582/582, 99% coverage) before commit
+- **30 fixed** (marked ✅ above; 28 in the initial pass, +2 — R3-COMP-2/R3-COMP-3 — in a 2026-08-27 follow-up pass, see `docs/ALGORITHM_DECISION_LOG.md` Decision 4), each with a regression test where applicable, full suite verified green (589/589, 99% coverage) before commit
 - **1 explicit NEEDS-DECISION** requiring human/business authorization: R3-IP-1 (possible public disclosure of `PATENT.md` — trade-secret/bar-date risk). This is flagged prominently to the user, not acted on.
 - Two clusters of related findings were deliberately **not** mechanically fixed because they require an architectural decision, not a one-line patch — logged together for a dedicated future session:
   - **Pipeline ordering** (R3-PERF-1, R3-DQ-4): data-quality/multipath filtering runs on the wrong thread AND on the wrong (pre-correction) signal. Fixing the thread issue without fixing the ordering issue would just move the bug, not close it — these need to be redesigned together.

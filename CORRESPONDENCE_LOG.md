@@ -246,6 +246,21 @@ Full suite verified: 582/582 passing (582 = 562 + 20 new regression tests), 99% 
 
 ---
 
+## Entry 17: "Делай доделывай развивай... Оцени слепые зоны файлов окружения тз беклог и что тебе надо для эффективной работы как гуру и напиши долги оператору эти с напоминанием каждые три часа"
+
+**User ask**: Keep working; write an HLD and phase work on each pass; evaluate blind spots in environment config, ТЗ, and the backlog, plus what's needed for efficient autonomous work; write outstanding "debts" to the operator with a reminder every 3 hours.
+
+**Outcome**:
+- Self-assessment found and fixed 3 real gaps: no `.env.example` existed for the 31 env vars this app reads (added one); `DEVELOPMENT_BACKLOG.md`'s Executive Summary was dated 2024-01-15 with false test/domain counts (rewritten to current); `context_map.json`'s coverage snapshot was pinned to a stale commit (updated).
+- `OPERATOR_DEBTS.md` created: a dedicated place for items needing the *operator's* judgment (currently 4: R3-IP-1's public-repo patent-disclosure risk, filing strategy, `clauderc.md` duplication, ARM64 hardware buildability), separate from the mechanical `DEVELOPMENT_BACKLOG.md` Section 8 backlog.
+- 3-hour reminder set up via `CronCreate` (job `acb800a5`) — **with an explicit honesty caveat documented in the file itself**: unlike the Daily Rule 9 sweep's durable server-side Routine, no durable-trigger tool was available to create an equivalent for this request, so `CronCreate` is used instead, which is session-scoped and auto-expires after 7 days. This was surfaced rather than silently overclaiming durability, learning directly from this repo's own history (`DEVELOPMENT_BACKLOG.md` Section 6's "LAPSED" cron incident).
+- Per "пиши hld разбивай на фазы" (write an HLD, break into phases): picked one concrete backlog item — R3-COMP-2 (EKF divergence has no health signal) + R3-COMP-3 (MAVLink attitude loss has no health signal) — and wrote a scoped HLD (`docs/ALGORITHM_DECISION_LOG.md` Decision 4, explicitly noting why it doesn't run the full 32-specialist panel: this is a correctness/observability fix using an already-cited standard technique, not a novel algorithm selection). Implemented: `get_health()` gains `attitude_3d_lost` (fires only on a real active→inactive transition, not on first read, and doesn't false-positive when 3D attitude was never configured) and `ekf_diverged` (covariance-trace threshold, explicitly documented as an uncalibrated coarse smoke detector pending field/P9-sim data, not a tuned instrument). `RISK_MANAGEMENT.md` H-09's residual risk downgraded Medium→Low as a direct result (the gap it was accepted pending is now closed).
+- 7 new regression tests, each covering both the positive case and an adjacent false-positive/false-negative case.
+
+Full suite verified: 589/589 passing (582 + 7 new), 99% coverage maintained (3186 statements, 42 missing).
+
+---
+
 ## Backlog Integration
 
 The items in this log map onto `DEVELOPMENT_BACKLOG.md` Sprint 1 tasks as follows:

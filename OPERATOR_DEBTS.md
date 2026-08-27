@@ -59,13 +59,29 @@ Found via a fresh pass over environment config, ТЗ, and the backlog itself on 
 
 ## 4. Reminder cadence
 
-A Routine ("Operator Debt Reminder") fires every 3 hours, re-reads Section 1
-of this file, and messages the operator with the current NEEDS-DECISION
-count and headline. It does **not** re-run the full self-assessment each
+A scheduled job ("Operator Debt Reminder") fires every 3 hours (cron `13
+*/3 * * *`, job id `acb800a5`), re-reads Section 1 of this file, and
+messages the operator with the current NEEDS-DECISION count and a one-line
+headline per item. It does **not** re-run the full self-assessment each
 time (that's a periodic-audit action, not a 3-hourly one) — it just surfaces
 what's still open so nothing silently goes stale again. See
 `state_journal.md`'s Daily Rule 9 Sweep Log for the equivalent pattern
 already in use for the hardware-design sweep.
 
+**Important durability caveat, unlike the Daily Rule 9 sweep**: the Rule 9
+hardware-design sweep runs on a *durable server-side Routine* that has
+survived across container resets and many days (see `trigger_id:
+trig_012baCTwPWhsNiMaFRYzAsNo` in past notifications). This 3-hour reminder
+uses `CronCreate` instead, because no durable-trigger tool was available to
+this session when it was requested — `CronCreate` jobs are **session-only**
+(in-memory, gone if this session ends) and **auto-expire after 7 days**
+even if the session stays alive. If the operator wants this reminder to
+survive a session end or to run indefinitely, it needs to be re-created as
+a durable Routine through whatever interface set up the Daily Rule 9 sweep
+(this session doesn't have that tool). Flagging this now rather than
+silently letting it lapse the way the original Blind-Spot-Audit cron did
+(see `DEVELOPMENT_BACKLOG.md` Section 6's "LAPSED" note) — that exact
+failure mode is why this caveat is written down instead of assumed away.
+
 **Last full self-assessment**: 2026-08-27T05:30:00Z
-**Last reminder fired**: (updated by the Routine itself; check `state_journal.md` if this line looks stale)
+**Last reminder fired**: (updated by the job itself; check `state_journal.md`/git log if this line looks stale)

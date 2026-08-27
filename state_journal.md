@@ -32,6 +32,33 @@ Never end a turn that changed files without writing a new one.
 
 ## Latest Entry
 
+### 2026-08-27T06:30:00Z — Operator debt report + Decision 4 (attitude_3d_lost/ekf_diverged health signals)
+
+**Phase**: Self-assessment + Blind Spot Audit R3 follow-up (R3-COMP-2/R3-COMP-3)
+**Backlog step completed**: `DEVELOPMENT_BACKLOG.md` Section 8's R3-COMP-2/R3-COMP-3 closed; new `OPERATOR_DEBTS.md` created per explicit user request ("напиши долги оператору... с напоминанием каждые три часа")
+**Branch / commit**: `claude/physics-engineering-audit` — verify with `git log -1 --oneline` at read time
+**Test status**: 589/589 passing (582 baseline + 7 new), 99% coverage (3186 statements, 42 missing)
+**Unresolved issues**:
+- Same standing NEEDS-DECISION items (now consolidated in `OPERATOR_DEBTS.md` Section 1): R3-IP-1 (public-repo patent disclosure risk), Q89 (filing strategy), Q97 (`clauderc.md` duplication), Q47 (ARM64 hardware buildability)
+- Same architectural clusters deferred (pipeline ordering R3-PERF-1/R3-DQ-4; detector permanent-freeze R3-DQ-6/R3-TEST-4)
+- **Reminder mechanism caveat**: the 3-hour Operator Debt Reminder uses `CronCreate` (job `acb800a5`, cron `13 */3 * * *`) because no durable-trigger tool was available when requested — unlike the Daily Rule 9 sweep's durable server-side Routine, this is session-scoped and auto-expires after 7 days. Documented in `OPERATOR_DEBTS.md` Section 4 so it doesn't silently lapse unexplained the way the original blind-spot cron did (`DEVELOPMENT_BACKLOG.md` Section 6).
+**Files touched this iteration**:
+- `OPERATOR_DEBTS.md`: new — NEEDS-DECISION items + self-assessment findings + reminder-cadence documentation
+- `.env.example`: new — all 31 env vars this app reads, none previously documented in one place
+- `docker-compose.yml`: comment pointing at `.env.example`
+- `DEVELOPMENT_BACKLOG.md`: Executive Summary rewritten (was dated 2024-01-15, claimed false test/domain counts); Section 8 R3-COMP-2/3 marked done
+- `context_map.json`: `coverage_summary`/`generated` updated from stale `6c94d01`/3120-stmt snapshot to current
+- `docs/ALGORITHM_DECISION_LOG.md`: new Decision 4 (scoped HLD, not full 32-panel — see its own "Note on HLD depth")
+- `app/config.py`: `EKFConfig.divergence_trace_threshold` (env `EKF_DIVERGENCE_TRACE_THRESHOLD`, default 50.0, explicitly documented as uncalibrated)
+- `app/main.py`: `_attitude_3d_ever_active` tracking in `_project_beam()`; `get_health()` gains `attitude_3d_lost` and `ekf_diverged` reasons, and `no_heading_source` now also considers 3D attitude a valid heading source
+- `RISK_MANAGEMENT.md`: H-09 gap closed (residual S3×P2 Medium → S3×P1 Low), H-05 gains an `ekf_diverged` control reference, Residual Risk Summary table updated
+- `BLIND_SPOT_AUDIT_R3_FINDINGS.md`: R3-COMP-2/3 marked ✅, fixed-count 28→30
+- `tests/test_main_internals.py`: 7 new tests (`TestAttitudeAndEKFHealthSignals`)
+**Next step**: Next 3-hour reminder cycle may optionally advance one more Section 8 item per its own instructions (not mandatory). Highest standing priority remains the pipeline-ordering architectural cluster — needs a dedicated session, not a cycle-sized slice.
+**Confidence in current approach**: High for the code changes (each new health reason has a false-positive AND false-negative regression test; the EKF threshold's uncertainty is written down rather than hidden — see Decision 4's "Calibration caveat"). Correctly did NOT invent a durable-trigger capability that wasn't actually available — used the honest fallback (`CronCreate`) and documented its limitation instead of silently overclaiming durability.
+
+---
+
 ### 2026-08-17T00:00:00Z — Blind Spot Audit Round 3: 96 findings, 28 fixed with tests
 
 **Phase**: Blind Spot Audit Round 3 (cross-cutting, all 12 CLAUDE.md Rule 1 domains)
