@@ -32,6 +32,20 @@ Never end a turn that changed files without writing a new one.
 
 ## Latest Entry
 
+### 2026-09-03T00:00:00Z — Reminder cadence consolidated to daily per operator request
+
+**Phase**: Housekeeping (cross-cutting, not a numbered backlog sprint)
+**Backlog step completed**: N/A — direct operator instruction, not a pre-planned item
+**Branch / commit**: `claude/physics-engineering-audit` — verify with `git log -1 --oneline` at read time
+**Test status**: 589/589 passing (unchanged — docs/scheduling only, no `app/` code touched)
+**Unresolved issues**: same standing 4 NEEDS-DECISION items in `OPERATOR_DEBTS.md` Section 1, unchanged by this iteration
+**Files touched this iteration**:
+- `OPERATOR_DEBTS.md`: Section 4 rewritten — 3-hour reminder (job `acb800a5`) had already lapsed from the 2026-08-29 environment reset (exactly the durability caveat it documented); replaced with a daily job (`f165bac9`, ~15:07 UTC) per operator request "Все рутинные процессы запускай раз день. Остальные отмени. Оператор изучает код."
+**Next step**: nothing pending from this change itself. `CronList` confirmed no other in-session jobs existed to cancel — the daily Rule 9 hardware sweep (external, durable) is unaffected and remains the other routine process.
+**Confidence in current approach**: High — this is a direct, unambiguous instruction with no design judgment involved; verified via `CronList` before acting rather than assuming prior state.
+
+---
+
 ### 2026-08-27T06:30:00Z — Operator debt report + Decision 4 (attitude_3d_lost/ekf_diverged health signals)
 
 **Phase**: Self-assessment + Blind Spot Audit R3 follow-up (R3-COMP-2/R3-COMP-3)

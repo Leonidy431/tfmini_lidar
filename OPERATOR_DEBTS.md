@@ -59,29 +59,39 @@ Found via a fresh pass over environment config, ТЗ, and the backlog itself on 
 
 ## 4. Reminder cadence
 
-A scheduled job ("Operator Debt Reminder") fires every 3 hours (cron `13
-*/3 * * *`, job id `acb800a5`), re-reads Section 1 of this file, and
-messages the operator with the current NEEDS-DECISION count and a one-line
-headline per item. It does **not** re-run the full self-assessment each
-time (that's a periodic-audit action, not a 3-hourly one) — it just surfaces
-what's still open so nothing silently goes stale again. See
-`state_journal.md`'s Daily Rule 9 Sweep Log for the equivalent pattern
-already in use for the hardware-design sweep.
+**Update 2026-09-03**: consolidated from 3-hour to **once daily**, per
+explicit operator instruction ("Все рутинные процессы запускай раз день.
+Остальные отмени. Оператор изучает код." — run all routine processes once
+a day, cancel the rest; the operator is reviewing the code themselves).
+The original 3-hour job (`acb800a5`) had already lapsed by this point —
+exactly the durability caveat below predicted, since it was a session-only
+`CronCreate` job and this session went through an environment reset in the
+interim (see `state_journal.md`'s 2026-08-29 entry). Its replacement (job
+id `f165bac9`, cron `7 15 * * *`, ~15:07 UTC daily) re-reads Section 1 of
+this file once a day and messages the operator a short NEEDS-DECISION
+status line — no full self-assessment, no verbose report, since the
+operator is actively in the code and doesn't need interruption chatter.
+
+This is now the **only** scheduled reminder this session runs, alongside
+the pre-existing Daily Rule 9 hardware-design sweep (durable, external,
+unaffected by this change — see `trigger_id: trig_012baCTwPWhsNiMaFRYzAsNo`
+in past notifications). Nothing else was scheduled to cancel: `CronList`
+confirmed no other in-session jobs were active at the time of this request.
 
 **Important durability caveat, unlike the Daily Rule 9 sweep**: the Rule 9
 hardware-design sweep runs on a *durable server-side Routine* that has
-survived across container resets and many days (see `trigger_id:
-trig_012baCTwPWhsNiMaFRYzAsNo` in past notifications). This 3-hour reminder
-uses `CronCreate` instead, because no durable-trigger tool was available to
-this session when it was requested — `CronCreate` jobs are **session-only**
-(in-memory, gone if this session ends) and **auto-expire after 7 days**
-even if the session stays alive. If the operator wants this reminder to
-survive a session end or to run indefinitely, it needs to be re-created as
-a durable Routine through whatever interface set up the Daily Rule 9 sweep
-(this session doesn't have that tool). Flagging this now rather than
-silently letting it lapse the way the original Blind-Spot-Audit cron did
-(see `DEVELOPMENT_BACKLOG.md` Section 6's "LAPSED" note) — that exact
-failure mode is why this caveat is written down instead of assumed away.
+survived across container resets and many days. This reminder still uses
+`CronCreate`, because no durable-trigger tool was available to this session
+when it was requested — `CronCreate` jobs are **session-only** (in-memory,
+gone if this session ends) and **auto-expire after 7 days** even if the
+session stays alive, and (as just demonstrated) do not survive an
+environment/container reset either. If the operator wants this reminder to
+survive a session end or reset, it needs to be re-created as a durable
+Routine through whatever interface set up the Daily Rule 9 sweep (this
+session doesn't have that tool). Flagging this again rather than silently
+letting it lapse a second time unexplained — see `DEVELOPMENT_BACKLOG.md`
+Section 6's original "LAPSED" incident, the pattern this caveat exists to
+stop repeating.
 
 **Last full self-assessment**: 2026-08-27T05:30:00Z
 **Last reminder fired**: (updated by the job itself; check `state_journal.md`/git log if this line looks stale)
