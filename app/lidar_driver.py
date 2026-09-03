@@ -311,6 +311,12 @@ class TFminiSDriver:
     def _parse_frame(self, frame: bytes) -> Optional[LiDARReading]:
         """Parse TFmini-S data frame"""
         try:
+            # Validate checksum: low byte of sum of first 8 bytes
+            checksum_calc = sum(frame[0:8]) & 0xFF
+            if checksum_calc != frame[8]:
+                logger.warning(f"Checksum mismatch: calculated {checksum_calc:02x}, got {frame[8]:02x}")
+                return None
+
             # Distance in cm (convert to meters)
             distance_cm = frame[2] | (frame[3] << 8)
             distance_m = distance_cm / 100.0
